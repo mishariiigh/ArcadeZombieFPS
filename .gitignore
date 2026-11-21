@@ -1,0 +1,17 @@
+build/
+*.xcodeproj
+*.xcworkspace
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.user
+.DS_Store
+*.o
+*.dylib
+*.app
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+_compile_commands.json
