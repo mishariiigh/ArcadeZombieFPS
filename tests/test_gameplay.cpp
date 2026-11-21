@@ -372,6 +372,69 @@ static void TestZombie_AttackDamagesPlayer() {
     PASS();
 }
 
+static void TestZombie_ModelLoadsAndUnloads() {
+    TEST("Zombie model loads and unloads cleanly");
+    ZombieManager zm;
+    ASSERT(zm.Init() == true, "zombie model should load from project-relative path");
+    ASSERT(zm.ModelReady() == true, "model should be ready after Init");
+    zm.Shutdown();
+    PASS();
+}
+
+static void TestZombie_AnimationIndicesResolved() {
+    TEST("Zombie animation indices are resolved");
+    ZombieManager zm;
+    ASSERT(zm.Init() == true, "model loaded");
+    // Indices are private; exercise them indirectly by updating + drawing one zombie.
+    zm.Spawn({ 2, 0, 0 }, 3, 2.0f);
+    Vector3 playerPos{ 0, 0, 0 };
+    zm.Update(0.05f, playerPos, 0.35f);  // zombie walks toward player
+    zm.Draw();  // draws the animated model (no crash)
+    zm.Shutdown();
+    PASS();
+}
+
+static void TestZombie_MultipleZombiesRender() {
+    TEST("Multiple zombies update and draw simultaneously");
+    ZombieManager zm;
+    ASSERT(zm.Init() == true, "model loaded");
+    zm.Spawn({ 0, 0, 0 }, 3, 2.0f);
+    zm.Spawn({ 5, 0, 0 }, 4, 3.0f);
+    zm.Spawn({ -4, 0, 3 }, 5, 2.5f);
+    zm.Spawn({ 4, 0, -3 }, 3, 2.0f);
+    zm.Spawn({ 0, 0, 6 }, 4, 2.8f);
+    ASSERT(zm.TotalCount() == 5, "five zombies spawned");
+    Vector3 playerPos{ 0, 0, 0 };
+    for (int i = 0; i < 10; ++i) {
+        zm.Update(0.016f, playerPos, 0.35f);
+        zm.Draw();  // draw all five animated models each frame
+    }
+    ASSERT(zm.AliveCount() == 5, "all five still alive");
+    zm.Shutdown();
+    PASS();
+}
+
+static void TestZombie_DeathAndRemoval() {
+    TEST("Zombie death animation and removal");
+    ZombieManager zm;
+    ASSERT(zm.Init() == true, "model loaded");
+    zm.Spawn({ 0, 0, 0 }, 1, 2.0f);  // one hit kills
+    ASSERT(zm.AliveCount() == 1, "one zombie alive");
+    Ray ray{};
+    ray.position = { -5.0f, 0.0f, 0.0f };
+    ray.direction = { 1.0f, 0.0f, 0.0f };
+    ray.direction = Vector3Normalize(ray.direction);
+    int score = zm.TestHit(ray);
+    ASSERT(score == 10, "single hit kills and awards 10");
+    ASSERT(zm.AliveCount() == 0, "zombie no longer alive");
+    ASSERT(zm.TotalCount() == 1, "dying zombie remains during death animation");
+    zm.Draw();  // draw the dying zombie (animated + fading)
+    zm.Update(0.7f, { 0, 0, 0 }, 0.35f);  // advance past the 0.6s removal threshold
+    ASSERT(zm.TotalCount() == 0, "zombie removed after death timer");
+    zm.Shutdown();
+    PASS();
+}
+
 // ---------------------------------------------------------------------------
 // World tests (collision)
 // ---------------------------------------------------------------------------
@@ -397,6 +460,10 @@ static void TestWorld_PlayerCollision() {
 // ---------------------------------------------------------------------------
 
 int main() {
+    // A minimal GL context is required so the zombie model (glTF) can be loaded.
+    InitWindow(1, 1, "tests");
+    SetWindowState(FLAG_WINDOW_UNFOCUSED);
+
     printf("ArcadeZombieFPS Automated Gameplay Tests\n");
     printf("=========================================\n\n");
 
@@ -422,12 +489,18 @@ int main() {
     TestZombie_SeparationMovesApart();
     TestZombie_UpdateMovesTowardPlayer();
     TestZombie_AttackDamagesPlayer();
+    TestZombie_ModelLoadsAndUnloads();
+    TestZombie_AnimationIndicesResolved();
+    TestZombie_MultipleZombiesRender();
+    TestZombie_DeathAndRemoval();
 
     printf("\n[World]\n");
     TestWorld_PlayerCollision();
 
     printf("\n=========================================\n");
     printf("Results: %d passed, %d failed\n", testsPassed, testsFailed);
+
+    CloseWindow();
 
     if (testsFailed > 0) {
         return 1;

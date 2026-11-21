@@ -28,6 +28,11 @@ bool Game::Init() {
     world->Init();
     player->Reset(camera);
 
+    // Load the shared zombie model/animations now that an OpenGL context exists.
+    if (!zombies->Init()) {
+        // Non-fatal: zombies simply won't render until the asset is available.
+    }
+
     Restart();
     return true;
 }
@@ -41,6 +46,7 @@ void Game::Run() {
 }
 
 void Game::Shutdown() {
+    zombies->Shutdown();
     CloseWindow();
 }
 

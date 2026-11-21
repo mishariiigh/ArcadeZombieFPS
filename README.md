@@ -32,7 +32,7 @@ make -j4
 ```
 src/          main.cpp, game.cpp, player.cpp, weapon.cpp, zombie.cpp, world.cpp
 include/      game.h, player.h, weapon.h, zombie.h, world.h
-assets/       models/, textures/, sounds/  (empty; all geometry is procedural)
+assets/       models/zombie.glb (+ LICENSE), textures/, sounds/
 CMakeLists.txt
 README.md
 .gitignore
@@ -51,4 +51,15 @@ README.md
 ## Performance
 
 Target 60 FPS. Simple procedural geometry, no per-frame allocations in the hot loop, raycast hit tests only on shot. Tested on an Intel Iris Pro / i7-4770HQ / 16 GB macOS Sonoma machine — launches and runs at interactive frame rates.
+
+## Zombie model asset
+
+Zombies are rendered with a low-poly 3D glTF 2.0 model (`assets/models/zombie.glb`) instead of primitive cubes. The model is shared across all zombie instances (loaded once, unloaded on shutdown) and is animated with skeletal animation: idle (breathing), walk, attack (punch), and death.
+
+- Source: `blocky_09_zombie.glb` from https://github.com/Vuena/free-low-poly-characters-cc0 (file `GLB/blocky_09_zombie.glb`), author Vuena.
+- License: CC0 1.0 Universal (public domain); full text in `assets/models/LICENSE`. No attribution required; free for personal and commercial use.
+- Animations (all from the same asset): `idle`, `walk`, `punch` (used as attack), `death`. Origin at feet, ~1.8 m tall, 22 bones.
+
+Animation state is driven by the existing zombie gameplay logic (chasing → walk, contact attack → attack/punch, death → death + fade/sink). Detection, movement, damage, and wave mechanics are unchanged.
+
 # ArcadeZombieFPS
