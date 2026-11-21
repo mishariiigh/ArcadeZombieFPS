@@ -13,6 +13,8 @@ public:
 
     void TakeDamage(int amount);
     void AddPitch(float radians);
+    void ApplyRecoil(float radians);
+    void ResetMouseLook();
     bool IsAlive() const { return health > 0; }
     int Health() const { return health; }
 
@@ -30,6 +32,7 @@ private:
     Vector3 velocity{ 0, 0, 0 };
     float yaw = 0.0f;     // radians, around Y
     float pitch = 0.0f;   // radians, up/down
+    float recoilPitch = 0.0f;
 
     float radius = 0.35f;
     float height = 1.7f;
@@ -38,6 +41,10 @@ private:
     float jumpVelocity = 6.5f;
     float gravity = 24.0f;
     float mouseSensitivity = 0.003f;
+    float recoilDecay = 8.0f * 0.6f;
+
+    Vector2 previousMousePosition{};
+    bool mouseNeedsReset = true;
 
     int health = 100;
     int maxHealth = 100;

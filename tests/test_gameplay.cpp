@@ -334,6 +334,133 @@ static void TestPlayer_AddPitchClamps() {
     PASS();
 }
 
+static void TestPlayer_WForwardSBackward() {
+    TEST("W moves forward, S moves backward");
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    ASSERT(p.Forward().z > 0.9f, "W moves forward (+Z)");
+    Vector3 back = Vector3Negate(p.Forward());
+    ASSERT(back.z < -0.9f, "S moves backward (-Z)");
+    PASS();
+}
+
+static void TestPlayer_ADirectionsFixed() {
+    TEST("A moves left, D moves right (cross product fixed)");
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    Vector3 up{ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, p.Forward()));
+    ASSERT(right.x > 0.9f, "D moves right (+X)");
+    Vector3 left = Vector3Negate(right);
+    ASSERT(left.x < -0.9f, "A moves left (-X)");
+    PASS();
+}
+
+static void TestPlayer_DiagonalNormalized() {
+    TEST("Forward vector is normalized (diagonal move normalized in input)");
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    float len = Vector3Length(p.Forward());
+    ASSERT(len > 0.99f && len < 1.01f, "forward is unit length");
+    Vector3 up{ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, p.Forward()));
+    float dot = Vector3DotProduct(p.Forward(), right);
+    ASSERT(dot > -0.01f && dot < 0.01f, "forward and right are orthogonal");
+    PASS();
+}
+
+static void TestPlayer_MovementCameraRelative() {
+    TEST("Movement stays camera-relative after rotation");
+    Player p;
+    Camera3D cam{};
+    World world;
+    world.Init();
+    p.Reset(cam);
+    ASSERT(p.Forward().z > 0.9f, "starts facing +Z");
+    int cx = GetScreenWidth() / 2;
+    int cy = GetScreenHeight() / 2;
+    p.Update(0.016f, cam, world);
+    SetMousePosition(cx + 300, cy);
+    p.Update(0.016f, cam, world);
+    ASSERT(p.Forward().x > 0.1f, "forward rotated toward +X after yawing right");
+    PASS();
+}
+
+static void TestCamera_YawAndPitchFromMouse() {
+    TEST("Horizontal mouse moves yaw, vertical mouse moves pitch");
+    Player p;
+    Camera3D cam{};
+    World world;
+    world.Init();
+    p.Reset(cam);
+    int cx = GetScreenWidth() / 2;
+    int cy = GetScreenHeight() / 2;
+    p.Update(0.016f, cam, world);
+    SetMousePosition(cx + 300, cy);
+    p.Update(0.016f, cam, world);
+    ASSERT(p.Forward().x > 0.1f, "positive mouse X yaws right");
+    p.Update(0.016f, cam, world);
+    SetMousePosition(cx, cy + 300);
+    p.Update(0.016f, cam, world);
+    float pitchDiff = cam.target.y - cam.position.y;
+    ASSERT(pitchDiff < -0.5f, "positive mouse Y pitches down");
+    PASS();
+}
+
+static void TestCamera_PitchClamped() {
+    TEST("Pitch remains within configured limits");
+    Player p;
+    Camera3D cam{};
+    World world;
+    world.Init();
+    p.Reset(cam);
+    int cx = GetScreenWidth() / 2;
+    int cy = GetScreenHeight() / 2;
+    p.Update(0.016f, cam, world);
+    SetMousePosition(cx, cy + 5000);
+    p.Update(0.016f, cam, world);
+    float pitchDiff = cam.target.y - cam.position.y;
+    ASSERT(pitchDiff < -0.5f, "looking steeply down after large mouse Y");
+    ASSERT(pitchDiff >= -1.0f, "pitch clamped, not extreme");
+    PASS();
+}
+
+static void TestRecoil_TemporaryAndRecovers() {
+    TEST("Shooting applies a temporary camera kick that recovers");
+    Player p;
+    Camera3D cam{};
+    World world;
+    world.Init();
+    p.Reset(cam);
+    Vector3 baseFwd = p.Forward();
+    float baseY = cam.target.y;
+    p.ApplyRecoil(0.5f);
+    p.Update(0.016f, cam, world);
+    ASSERT(cam.target.y > baseY + 0.2f, "recoil kicks camera up");
+    for (int i = 0; i < 40; ++i) p.Update(0.016f, cam, world);
+    ASSERT(p.Forward().y > baseFwd.y - 0.1f, "recoil recovers toward original aim");
+    PASS();
+}
+
+static void TestRecoil_NoUnboundedAccumulation() {
+    TEST("Repeated recoil does not accumulate unbounded");
+    Player p;
+    Camera3D cam{};
+    World world;
+    world.Init();
+    p.Reset(cam);
+    p.ApplyRecoil(1.0f);
+    p.Update(0.016f, cam, world);
+    ASSERT(p.Forward().y <= 1.0f, "recoil kick clamped");
+    p.ApplyRecoil(1.0f);
+    p.Update(0.016f, cam, world);
+    ASSERT(p.Forward().y <= 1.0f, "recoil not applied twice / no accumulation");
+    PASS();
+}
+
 // ---------------------------------------------------------------------------
 // ZombieManager tests
 // ---------------------------------------------------------------------------
@@ -623,7 +750,7 @@ static void TestWorld_PlayerCollision() {
 
 int main() {
     // A minimal GL context is required so the zombie model (glTF) can be loaded.
-    InitWindow(1, 1, "tests");
+    InitWindow(1280, 720, "tests");
     SetWindowState(FLAG_WINDOW_UNFOCUSED);
 
     printf("ArcadeZombieFPS Automated Gameplay Tests\n");
@@ -648,6 +775,14 @@ int main() {
     printf("\n[Player]\n");
     TestPlayer_TakeDamage();
     TestPlayer_AddPitchClamps();
+    TestPlayer_WForwardSBackward();
+    TestPlayer_ADirectionsFixed();
+    TestPlayer_DiagonalNormalized();
+    TestPlayer_MovementCameraRelative();
+    TestCamera_YawAndPitchFromMouse();
+    TestCamera_PitchClamped();
+    TestRecoil_TemporaryAndRecovers();
+    TestRecoil_NoUnboundedAccumulation();
 
     printf("\n[ZombieManager]\n");
     TestZombie_SpawnAndCount();

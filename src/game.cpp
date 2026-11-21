@@ -80,6 +80,7 @@ void Game::Restart() {
     player->Reset(camera);
     weapon->Reset();
     zombies->Clear();
+    player->ResetMouseLook();
 
     // Reset audio state on restart: restart ambient music and signal a new wave start.
     audio.StopMusic();
@@ -179,19 +180,18 @@ void Game::Update() {
     if (IsKeyPressed(KEY_ESCAPE)) {
         paused = !paused;
         if (paused) audio.PauseMusic();
-        else audio.ResumeMusic();
+        else {
+            audio.ResumeMusic();
+            player->ResetMouseLook();
+        }
     }
 
     if (paused || gameOver) {
-        EnableCursor();
         if (gameOver && IsKeyPressed(KEY_R)) {
             Restart();
-            DisableCursor();
         }
         return;
     }
-
-    DisableCursor();
 
     // Keep the ambient music stream alive during active play.
     audio.Update();
@@ -216,8 +216,8 @@ void Game::Update() {
                 AddScore(pts);
                 audio.PlaySfx(AudioManager::Sfx::ZombieDeath);
             }
-            // Recoil view kick: pitch camera up when firing
-            player->AddPitch(weapon->ViewKick());
+            // Recoil view kick: transient camera pitch kick that recovers.
+            player->ApplyRecoil(weapon->ViewKick());
         } else if (weapon->AmmoInClip() == 0 && !weapon->IsReloading()) {
             audio.PlaySfx(AudioManager::Sfx::EmptyClick);
         }

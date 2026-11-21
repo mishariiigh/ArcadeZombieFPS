@@ -25,9 +25,10 @@ Vector3 Player::Forward() const {
 
 void Player::UpdateCameraVectors(Camera3D& camera) {
     Vector3 forward;
-    forward.x = cosf(pitch) * sinf(yaw);
-    forward.y = sinf(pitch);
-    forward.z = cosf(pitch) * cosf(yaw);
+    float effectivePitch = pitch + recoilPitch;
+    forward.x = cosf(effectivePitch) * sinf(yaw);
+    forward.y = sinf(effectivePitch);
+    forward.z = cosf(effectivePitch) * cosf(yaw);
     camera.position = position;
     camera.position.y += height;
     camera.target = Vector3Add(camera.position, forward);
@@ -37,15 +38,27 @@ void Player::UpdateCameraVectors(Camera3D& camera) {
 }
 
 void Player::HandleInput(float dt, Camera3D& camera) {
-    // Mouse look (cursor is hidden/captured while playing)
-    Vector2 mouse = GetMouseDelta();
-    yaw += mouse.x * mouseSensitivity;
-    pitch -= mouse.y * mouseSensitivity;
+    int cx = GetScreenWidth() / 2;
+    int cy = GetScreenHeight() / 2;
+
+    Vector2 currentMouse = GetMousePosition();
+    Vector2 mouseDelta{ 0.0f, 0.0f };
+    if (!mouseNeedsReset) {
+        mouseDelta = Vector2Subtract(currentMouse, previousMousePosition);
+    } else {
+        mouseNeedsReset = false;
+    }
+
+    yaw += mouseDelta.x * mouseSensitivity;
+    pitch -= mouseDelta.y * mouseSensitivity;
     if (pitch > 1.45f) pitch = 1.45f;
     if (pitch < -1.45f) pitch = -1.45f;
 
+    previousMousePosition = { (float)cx, (float)cy };
+    SetMousePosition(cx, cy);
+
     Vector3 forward = Forward();
-    Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, { 0.0f, 1.0f, 0.0f }));
+    Vector3 right = Vector3Normalize(Vector3CrossProduct({ 0.0f, 1.0f, 0.0f }, forward));
 
     Vector3 move{ 0.0f, 0.0f, 0.0f };
     if (IsKeyDown(KEY_W)) move = Vector3Add(move, forward);
@@ -64,6 +77,17 @@ void Player::HandleInput(float dt, Camera3D& camera) {
         velocity.y = jumpVelocity;
         onGround = false;
     }
+}
+
+void Player::ApplyRecoil(float radians) {
+    recoilPitch = radians;
+    if (recoilPitch > 1.45f) recoilPitch = 1.45f;
+    if (recoilPitch < -1.45f) recoilPitch = -1.45f;
+}
+
+void Player::ResetMouseLook() {
+    mouseNeedsReset = true;
+    previousMousePosition = { (float)(GetScreenWidth() / 2), (float)(GetScreenHeight() / 2) };
 }
 
 void Player::ApplyPhysics(float dt, const World& world) {
@@ -91,6 +115,16 @@ void Player::ApplyPhysics(float dt, const World& world) {
 
 void Player::Update(float dt, Camera3D& camera, const World& world) {
     HandleInput(dt, camera);
+
+    // Recoil recovery: transient camera kick decays toward zero each frame.
+    if (recoilPitch > 0.0f) {
+        recoilPitch -= recoilDecay * dt;
+        if (recoilPitch < 0.0f) recoilPitch = 0.0f;
+    } else if (recoilPitch < 0.0f) {
+        recoilPitch += recoilDecay * dt;
+        if (recoilPitch > 0.0f) recoilPitch = 0.0f;
+    }
+
     ApplyPhysics(dt, world);
     UpdateCameraVectors(camera);
 }
