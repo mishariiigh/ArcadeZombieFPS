@@ -62,4 +62,16 @@ Zombies are rendered with a low-poly 3D glTF 2.0 model (`assets/models/zombie.gl
 
 Animation state is driven by the existing zombie gameplay logic (chasing → walk, contact attack → attack/punch, death → death + fade/sink). Detection, movement, damage, and wave mechanics are unchanged.
 
+## First-person weapon
+
+The 2D weapon HUD is replaced with a 3D first-person viewmodel (gun + arms) rendered inside the 3D camera and attached to the player's view. The viewmodel is built from lightweight procedural meshes (unit cube + unit cylinder generated once with `GenMeshCube`/`GenMeshCylinder`), so no external asset or license is required. It supports:
+
+- Idle positioning with subtle breathing sway.
+- Firing recoil (visual kick back/down, synchronized with the existing camera pitch kick).
+- Muzzle flash at the barrel tip.
+- Reload bob animation (weapon lowers and rises during reload).
+- Recoil/sway that does not alter aiming, damage, raycasting, or hit detection.
+
+All weapon gameplay (ammo, cooldown, fire rate, reload, `ViewKick`) is unchanged.
+
 # ArcadeZombieFPS

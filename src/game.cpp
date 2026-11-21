@@ -33,6 +33,11 @@ bool Game::Init() {
         // Non-fatal: zombies simply won't render until the asset is available.
     }
 
+    // Generate the 3D first-person viewmodel meshes.
+    if (!weapon->Init()) {
+        // Non-fatal: weapon will not render in 3D until meshes are available.
+    }
+
     Restart();
     return true;
 }
@@ -46,6 +51,7 @@ void Game::Run() {
 }
 
 void Game::Shutdown() {
+    weapon->Shutdown();
     zombies->Shutdown();
     CloseWindow();
 }
@@ -203,10 +209,10 @@ void Game::Draw() {
     BeginMode3D(camera);
         world->Draw();
         zombies->Draw();
+        weapon->Draw3D(camera);
     EndMode3D();
 
-    // 2D HUD / weapon (screen space)
-    weapon->Draw(camera, screenWidth, screenHeight);
+    // 2D HUD (crosshair and text; the weapon is now rendered in 3D above)
 
     int cx = screenWidth / 2;
     int cy = screenHeight / 2;

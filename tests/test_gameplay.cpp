@@ -209,6 +209,91 @@ static void TestWeapon_Reset() {
     PASS();
 }
 
+static void TestWeapon_LoadAndUnloadMeshes() {
+    TEST("Weapon generates and unloads viewmodel meshes");
+    Weapon w;
+    ASSERT(w.Init() == true, "viewmodel meshes should generate");
+    ASSERT(w.Ready() == true, "weapon should be ready after Init");
+    w.Shutdown();
+    ASSERT(w.Ready() == false, "weapon should not be ready after Shutdown");
+    PASS();
+}
+
+static void TestWeapon_ShootSetsRecoilAndMuzzleFlash() {
+    TEST("Weapon shoot sets recoil and muzzle flash");
+    Weapon w;
+    Camera3D cam{};
+    cam.position = { 0, 2, 0 };
+    cam.target = { 0, 2, -1 };
+
+    ASSERT(w.ViewKick() == 0.0f, "no recoil initially");
+    ShotResult sr = w.Shoot(cam);
+    ASSERT(sr.fired == true, "shot should fire");
+    ASSERT(w.AmmoInClip() == 11, "ammo should drop to 11");
+    ASSERT(w.ViewKick() > 0.0f, "shoot should produce recoil");
+    ASSERT(w.ViewKick() < 0.32f, "ViewKick should be recoil * 0.6f");
+    // Muzzle flash is internal; verify via re-shoot cooldown instead.
+    w.Update(0.2f, cam);  // expire cooldown and most recoil
+    ASSERT(w.ViewKick() < 0.05f, "recoil should decay over time");
+    PASS();
+}
+
+static void TestWeapon_AmmoConsumptionAndEmptyClip() {
+    TEST("Weapon ammo consumption and empty clip");
+    Weapon w;
+    Camera3D cam{};
+    cam.position = { 0, 2, 0 };
+    cam.target = { 0, 2, -1 };
+
+    for (int i = 0; i < 12; ++i) {
+        ShotResult sr = w.Shoot(cam);
+        ASSERT(sr.fired == true, "shot should fire");
+        w.Update(0.2f, cam);
+    }
+    ASSERT(w.AmmoInClip() == 0, "clip should be empty");
+    ASSERT(w.CanShoot() == false, "empty clip cannot shoot");
+    ShotResult sr = w.Shoot(cam);
+    ASSERT(sr.fired == false, "empty clip shot should not fire");
+    PASS();
+}
+
+static void TestWeapon_ReloadTransition() {
+    TEST("Weapon reload transition restores ammo");
+    Weapon w;
+    Camera3D cam{};
+    cam.position = { 0, 2, 0 };
+    cam.target = { 0, 2, -1 };
+
+    for (int i = 0; i < 12; ++i) {
+        w.Shoot(cam);
+        w.Update(0.2f, cam);
+    }
+    ASSERT(w.AmmoInClip() == 0, "clip empty before reload");
+    w.Reload();
+    ASSERT(w.IsReloading() == true, "should be reloading");
+    ASSERT(w.CanShoot() == false, "cannot shoot while reloading");
+    w.Update(1.5f, cam);  // reloadTime is 1.4s
+    ASSERT(w.IsReloading() == false, "reload should finish");
+    ASSERT(w.AmmoInClip() == 12, "clip should be full after reload");
+    ASSERT(w.AmmoReserve() == 24, "reserve should be 36 - 12 = 24");
+    PASS();
+}
+
+static void TestWeapon_Draw3DSmoke() {
+    TEST("Weapon Draw3D runs without error");
+    Weapon w;
+    ASSERT(w.Init() == true, "meshes should load");
+    Camera3D cam{};
+    cam.position = { 0, 2, 0 };
+    cam.target = { 0, 2, -1 };
+    cam.up = { 0, 1, 0 };
+    cam.fovy = 75.0f;
+    cam.projection = CAMERA_PERSPECTIVE;
+    w.Draw3D(cam);  // smoke test: should not crash
+    w.Shutdown();
+    PASS();
+}
+
 // ---------------------------------------------------------------------------
 // Player tests
 // ---------------------------------------------------------------------------
@@ -477,6 +562,11 @@ int main() {
     TestWeapon_ReloadWhenNoReserveIsNoOp();
     TestWeapon_RecoilViewKick();
     TestWeapon_Reset();
+    TestWeapon_LoadAndUnloadMeshes();
+    TestWeapon_ShootSetsRecoilAndMuzzleFlash();
+    TestWeapon_AmmoConsumptionAndEmptyClip();
+    TestWeapon_ReloadTransition();
+    TestWeapon_Draw3DSmoke();
 
     printf("\n[Player]\n");
     TestPlayer_TakeDamage();

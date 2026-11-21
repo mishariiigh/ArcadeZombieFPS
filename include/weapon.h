@@ -12,8 +12,17 @@ public:
     Weapon();
     ~Weapon() = default;
 
+    // Loads/generates the 3D viewmodel meshes. Must be called after an OpenGL
+    // context exists (i.e. after InitWindow).
+    bool Init();
+    // Unloads the generated meshes. Safe to call on an unloaded weapon.
+    void Shutdown();
+    bool Ready() const { return ready; }
+
     void Update(float dt, const Camera3D& camera);
-    void Draw(const Camera3D& camera, int screenW, int screenH) const;
+    // Draws the 3D first-person viewmodel (gun + arms) inside BeginMode3D/EndMode3D,
+    // positioned relative to the camera.
+    void Draw3D(const Camera3D& camera);
 
     bool CanShoot() const { return !reloading && shootCooldown <= 0.0f && ammoInClip > 0; }
     ShotResult Shoot(const Camera3D& camera);
@@ -30,6 +39,9 @@ public:
     void Reset();
 
 private:
+    bool ready = false;
+    Model cubeModel{};   // unit cube, used for gun body/slide/grip
+    Model cylModel{};    // unit cylinder (local Y axis), used for barrel/arms
 
     int ammoInClip = 12;
     int ammoReserve = 36;
@@ -46,4 +58,9 @@ private:
     float muzzleFlashTimer = 0.0f;
 
     float swayTime = 0.0f;
+
+    // Draw a unit cube scaled/positioned/colored at a world position.
+    void DrawBox(const Vector3& pos, const Vector3& size, Color color) const;
+    // Draw a cylinder from start to end (world space), radius and color.
+    void DrawCyl(const Vector3& start, const Vector3& end, float radius, Color color) const;
 };
