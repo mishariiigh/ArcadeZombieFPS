@@ -1,0 +1,56 @@
+Audio assets used in ArcadeZombieFPS (assets/sounds/).
+All files are CC0 1.0 Universal (public domain) or self-authored and released under CC0.
+Full CC0 legal code: assets/sounds/LICENSE
+
+------------------------------------------------------------
+gunshot.wav  - Weapon gunshot (player fire)
+  Source:    https://opengameart.org/content/random-gunfire-sfx
+  File:      gunfire_sfx.wav
+  Author:    iamoneabe
+  License:   CC0 1.0 Universal
+
+------------------------------------------------------------
+reload.wav   - Weapon reload
+  Source:    https://opengameart.org/content/gun-reload-sounds
+  File:      gunreload1.wav
+  Author:    SpringySpringo
+  License:   CC0 1.0 Universal
+
+------------------------------------------------------------
+zombie_moans.ogg - Zombie idle growl / moan (occasional ambient)
+  Source:    https://opengameart.org/content/zombie-moans
+  File:      darsycho__zombie-moans.ogg
+  Author:    Darsycho
+  License:   CC0 1.0 Universal
+
+------------------------------------------------------------
+zombie_pain.ogg - Zombie death / pain sound (also player hurt)
+  Source:    https://opengameart.org/content/zombie-pain
+  File:      zombie_pain.ogg
+  Author:    Vinrax
+  License:   CC0 1.0 Universal (page also lists CC-BY 3.0; CC0 used)
+
+------------------------------------------------------------
+ambient_loop.ogg - Background ambient drone loop
+  Source:    https://opengameart.org/content/loopable-dungeon-ambience
+  File:      dungeon_ambient_1.ogg
+  Author:    JaggedStone
+  License:   CC0 1.0 Universal
+
+------------------------------------------------------------
+empty_click.wav - Empty magazine click (optional)
+  Source:    self-authored (generated programmatically)
+  Author:    Kilo (ArcadeZombieFPS project)
+  License:   CC0 1.0 Universal (self-authored)
+
+------------------------------------------------------------
+wave_start.wav - New wave start chime
+  Source:    self-authored (generated programmatically)
+  Author:    Kilo (ArcadeZombieFPS project)
+  License:   CC0 1.0 Universal (self-authored)
+
+------------------------------------------------------------
+gameover.wav - Game over tone
+  Source:    self-authored (generated programmatically)
+  Author:    Kilo (ArcadeZombieFPS project)
+  License:   CC0 1.0 Universal (self-authored)

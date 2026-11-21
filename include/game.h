@@ -4,6 +4,8 @@
 #include <vector>
 #include <cstdint>
 
+#include "audio.h"
+
 class Player;
 class Weapon;
 class World;
@@ -52,4 +54,5 @@ private:
     Weapon* weapon = nullptr;
     World* world = nullptr;
     ZombieManager* zombies = nullptr;
+    AudioManager audio{};
 };

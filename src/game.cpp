@@ -38,6 +38,11 @@ bool Game::Init() {
         // Non-fatal: weapon will not render in 3D until meshes are available.
     }
 
+    // Initialize the audio device and load all sound/music resources once.
+    if (!audio.Init()) {
+        // Non-fatal: game continues without audio if the device/assets fail.
+    }
+
     Restart();
     return true;
 }
@@ -52,6 +57,7 @@ void Game::Run() {
 
 void Game::Shutdown() {
     weapon->Shutdown();
+    audio.Shutdown();
     zombies->Shutdown();
     CloseWindow();
 }
@@ -74,6 +80,11 @@ void Game::Restart() {
     player->Reset(camera);
     weapon->Reset();
     zombies->Clear();
+
+    // Reset audio state on restart: restart ambient music and signal a new wave start.
+    audio.StopMusic();
+    audio.PlayMusic(AudioManager::MusicId::Ambient);
+    audio.PlaySfx(AudioManager::Sfx::WaveStart);
 }
 
 void Game::SpawnWave() {
@@ -85,6 +96,8 @@ void Game::DamagePlayer(int amount) {
     if (!player->IsAlive()) {
         gameOver = true;
         EnableCursor();
+        audio.StopMusic();
+        audio.PlaySfx(AudioManager::Sfx::GameOver);
     }
 }
 
@@ -165,6 +178,8 @@ void Game::Update() {
 
     if (IsKeyPressed(KEY_ESCAPE)) {
         paused = !paused;
+        if (paused) audio.PauseMusic();
+        else audio.ResumeMusic();
     }
 
     if (paused || gameOver) {
@@ -178,28 +193,49 @@ void Game::Update() {
 
     DisableCursor();
 
+    // Keep the ambient music stream alive during active play.
+    audio.Update();
+
     player->Update(dt, camera, *world);
     weapon->Update(dt, camera);
     world->Update(dt);
 
     int dmg = zombies->Update(dt, player->Position(), player->Radius());
+    if (dmg > 0) {
+        audio.PlaySfx(AudioManager::Sfx::ZombieAttack);
+        audio.PlaySfx(AudioManager::Sfx::PlayerHurt);
+    }
     DamagePlayer(dmg);
 
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         ShotResult sr = weapon->Shoot(camera);
         if (sr.fired) {
+            audio.PlaySfx(AudioManager::Sfx::Gunshot);
             int pts = zombies->TestHit(sr.ray);
-            if (pts > 0) AddScore(pts);
+            if (pts > 0) {
+                AddScore(pts);
+                audio.PlaySfx(AudioManager::Sfx::ZombieDeath);
+            }
             // Recoil view kick: pitch camera up when firing
             player->AddPitch(weapon->ViewKick());
+        } else if (weapon->AmmoInClip() == 0 && !weapon->IsReloading()) {
+            audio.PlaySfx(AudioManager::Sfx::EmptyClick);
         }
     }
 
     if (IsKeyPressed(KEY_R)) {
+        bool wasReloading = weapon->IsReloading();
         weapon->Reload();
+        if (!wasReloading && weapon->IsReloading()) {
+            audio.PlaySfx(AudioManager::Sfx::Reload);
+        }
     }
 
+    int waveBefore = wave;
     UpdateWave(dt);
+    if (wave > waveBefore) {
+        audio.PlaySfx(AudioManager::Sfx::WaveStart);
+    }
 }
 
 void Game::Draw() {

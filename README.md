@@ -74,4 +74,38 @@ The 2D weapon HUD is replaced with a 3D first-person viewmodel (gun + arms) rend
 
 All weapon gameplay (ammo, cooldown, fire rate, reload, `ViewKick`) is unchanged.
 
+## Audio system
+
+A centralized `AudioManager` (header-only, `include/audio.h`) built on Raylib 5.5's built-in audio
+provides sound effects and a looping ambient track. The audio device is initialized once in
+`Game::Init()` and shut down in `Game::Shutdown()`; all resources are loaded once and released on
+shutdown, with idempotent init/shutdown (no leaks or double-frees).
+
+Master, SFX, and music volume controls are available (`SetMasterVolume`, `SetSfxVolume`,
+`SetMusicVolume`) and affect the appropriate channels.
+
+Sound effects respond to existing gameplay events:
+- Gunshot, reload, empty-magazine click (weapon)
+- Zombie idle growl (occasional), zombie attack, zombie death
+- Player hurt
+- Wave start, game over
+
+A looping ambient drone plays during active gameplay and pauses/stops on pause, game-over, and
+shutdown.
+
+### Audio assets (assets/sounds/)
+
+| File | Use | Source | License |
+|------|-----|--------|---------|
+| gunshot.wav | Weapon fire | https://opengameart.org/content/random-gunfire-sfx (iamoneabe) | CC0 1.0 |
+| reload.wav | Weapon reload | https://opengameart.org/content/gun-reload-sounds (SpringySpringo) | CC0 1.0 |
+| zombie_moans.ogg | Zombie idle growl | https://opengameart.org/content/zombie-moans (Darsycho) | CC0 1.0 |
+| zombie_pain.ogg | Zombie death / player hurt | https://opengameart.org/content/zombie-pain (Vinrax) | CC0 1.0 |
+| ambient_loop.ogg | Ambient loop | https://opengameart.org/content/loopable-dungeon-ambience (JaggedStone) | CC0 1.0 |
+| empty_click.wav | Empty magazine | self-authored | CC0 1.0 |
+| wave_start.wav | New wave chime | self-authored | CC0 1.0 |
+| gameover.wav | Game over tone | self-authored | CC0 1.0 |
+
+Full source/license details: `assets/sounds/CREDITS`; CC0 legal code: `assets/sounds/LICENSE`.
+
 # ArcadeZombieFPS

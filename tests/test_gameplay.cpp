@@ -23,6 +23,7 @@
 #include "weapon.h"
 #include "zombie.h"
 #include "world.h"
+#include "audio.h"
 
 static int testsPassed = 0;
 static int testsFailed = 0;
@@ -521,6 +522,82 @@ static void TestZombie_DeathAndRemoval() {
 }
 
 // ---------------------------------------------------------------------------
+// Audio tests
+// ---------------------------------------------------------------------------
+
+static void TestAudio_InitAndShutdown() {
+    TEST("Audio init and shutdown");
+    AudioManager a;
+    ASSERT(a.Init() == true, "audio device should initialize");
+    ASSERT(a.Ready() == true, "audio should be ready after Init");
+    a.Shutdown();
+    ASSERT(a.Ready() == false, "audio should not be ready after Shutdown");
+    PASS();
+}
+
+static void TestAudio_RepeatedInitShutdownSafe() {
+    TEST("Audio repeated init/shutdown is safe");
+    AudioManager a;
+    a.Init();
+    a.Init();  // should re-initialize cleanly, no leak
+    a.Shutdown();
+    a.Shutdown();  // double shutdown must not crash
+    a.Init();
+    ASSERT(a.Ready() == true, "audio should re-initialize after double shutdown");
+    a.Shutdown();
+    PASS();
+}
+
+static void TestAudio_VolumeControls() {
+    TEST("Audio volume controls");
+    AudioManager a;
+    a.Init();
+    ASSERT(a.MasterVolume() == 1.0f, "default master volume 1.0");
+    ASSERT(a.SfxVolume() == 1.0f, "default sfx volume 1.0");
+    ASSERT(a.MusicVolume() == 0.45f, "default music volume 0.45");
+
+    a.SetMasterVolume(0.5f);
+    ASSERT(a.MasterVolume() == 0.5f, "master volume settable");
+
+    a.SetSfxVolume(0.0f);
+    ASSERT(a.SfxVolume() == 0.0f, "sfx volume settable");
+
+    a.SetMusicVolume(1.0f);
+    ASSERT(a.MusicVolume() == 1.0f, "music volume settable");
+
+    // Clamping
+    a.SetMasterVolume(-1.0f);
+    ASSERT(a.MasterVolume() == 0.0f, "master volume clamps at 0");
+    a.SetMasterVolume(2.0f);
+    ASSERT(a.MasterVolume() == 1.0f, "master volume clamps at 1");
+
+    a.Shutdown();
+    PASS();
+}
+
+static void TestAudio_PlaySfxSafeWhenNotReady() {
+    TEST("Audio PlaySfx safe when not initialized");
+    AudioManager a;
+    // Should not crash without audio device
+    a.PlaySfx(AudioManager::Sfx::Gunshot);
+    a.PlaySfx(AudioManager::Sfx::Reload);
+    a.PlaySfx(AudioManager::Sfx::ZombieIdle);
+    PASS();
+}
+
+static void TestAudio_MusicControl() {
+    TEST("Audio music play/pause/stop");
+    AudioManager a;
+    ASSERT(a.Init() == true, "audio initialized");
+    a.PlayMusic(AudioManager::MusicId::Ambient);
+    a.PauseMusic();
+    a.ResumeMusic();
+    a.StopMusic();
+    a.Shutdown();
+    PASS();
+}
+
+// ---------------------------------------------------------------------------
 // World tests (collision)
 // ---------------------------------------------------------------------------
 
@@ -583,6 +660,13 @@ int main() {
     TestZombie_AnimationIndicesResolved();
     TestZombie_MultipleZombiesRender();
     TestZombie_DeathAndRemoval();
+
+    printf("\n[Audio]\n");
+    TestAudio_InitAndShutdown();
+    TestAudio_RepeatedInitShutdownSafe();
+    TestAudio_VolumeControls();
+    TestAudio_PlaySfxSafeWhenNotReady();
+    TestAudio_MusicControl();
 
     printf("\n[World]\n");
     TestWorld_PlayerCollision();
