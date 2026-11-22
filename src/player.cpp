@@ -63,8 +63,8 @@ void Player::HandleInput(float dt, Camera3D& camera) {
     Vector3 move{ 0.0f, 0.0f, 0.0f };
     if (IsKeyDown(KEY_W)) move = Vector3Add(move, forward);
     if (IsKeyDown(KEY_S)) move = Vector3Subtract(move, forward);
-    if (IsKeyDown(KEY_D)) move = Vector3Add(move, right);
-    if (IsKeyDown(KEY_A)) move = Vector3Subtract(move, right);
+    if (IsKeyDown(KEY_A)) move = Vector3Add(move, right);
+    if (IsKeyDown(KEY_D)) move = Vector3Subtract(move, right);
 
     float speed = walkSpeed;
     if (IsKeyDown(KEY_LEFT_SHIFT)) speed = sprintSpeed;
