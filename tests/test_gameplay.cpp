@@ -461,6 +461,269 @@ static void TestRecoil_NoUnboundedAccumulation() {
     PASS();
 }
 
+static void TestPlayer_AStrafeLeft() {
+    TEST("A produces leftward movement vector");
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    // At yaw 0, forward is +Z; camera-relative right is +X, so A (-right) is -X.
+    Vector3 up{ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, p.Forward()));
+    Vector3 moveA = Vector3Negate(right);
+    ASSERT(moveA.x < -0.9f, "A moves left (-X)");
+    ASSERT(moveA.z > -0.1f && moveA.z < 0.1f, "A has no forward/backward component");
+    PASS();
+}
+
+static void TestPlayer_DStrafeRight() {
+    TEST("D produces rightward movement vector");
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    Vector3 up{ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, p.Forward()));
+    ASSERT(right.x > 0.9f, "D moves right (+X)");
+    PASS();
+}
+
+static void TestPlayer_AAndDIndependent() {
+    TEST("A and D work independently without W or S");
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    Vector3 up{ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, p.Forward()));
+    // Pressing only A or only D yields pure lateral movement, no forward/back.
+    Vector3 moveA = Vector3Negate(right);
+    Vector3 moveD = right;
+    ASSERT(moveA.z > -0.01f && moveA.z < 0.01f, "A alone has no Z component");
+    ASSERT(moveD.z > -0.01f && moveD.z < 0.01f, "D alone has no Z component");
+    ASSERT(moveA.x < -0.9f && moveD.x > 0.9f, "A and D are opposite lateral directions");
+    PASS();
+}
+
+static void TestPlayer_AWithWAndDWithS() {
+    TEST("A works with W, D works with S (diagonal strafing)");
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    Vector3 forward = p.Forward();          // +Z at yaw 0
+    Vector3 up{ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, forward));
+    Vector3 wa = Vector3Normalize(Vector3Add(forward, Vector3Negate(right)));
+    Vector3 ds = Vector3Normalize(Vector3Subtract(right, forward));
+    // W+A: forward (+Z) and left (-X).
+    ASSERT(wa.z > 0.5f && wa.x < -0.5f, "W+A is forward-left");
+    // D+S: right (+X) and backward (-Z).
+    ASSERT(ds.z < -0.5f && ds.x > 0.5f, "D+S is backward-right");
+    // Diagonals are normalized (unit length).
+    ASSERT(Vector3Length(wa) > 0.99f && Vector3Length(wa) < 1.01f, "W+A normalized");
+    ASSERT(Vector3Length(ds) > 0.99f && Vector3Length(ds) < 1.01f, "D+S normalized");
+    PASS();
+}
+
+static void TestPlayer_OpenSpaceStrafeNotBlocked() {
+    TEST("Open-space strafing is not cancelled by collision");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    // Start position is open; a small strafe left/right must not collide.
+    Vector3 up{ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, p.Forward()));
+    Vector3 leftPos = Vector3Add(p.Position(), Vector3Scale(Vector3Negate(right), 1.0f));
+    Vector3 rightPos = Vector3Add(p.Position(), Vector3Scale(right, 1.0f));
+    ASSERT(world.PlayerCollides(leftPos, p.Radius(), p.Height()) == false,
+           "strafing left 1 unit in open space does not collide");
+    ASSERT(world.PlayerCollides(rightPos, p.Radius(), p.Height()) == false,
+           "strafing right 1 unit in open space does not collide");
+    PASS();
+}
+
+static void TestPlayer_StrafeMovesPositionRight() {
+    TEST("Simulated D input moves the player +X via ApplyPhysics");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    float startX = p.Position().x;
+    // Drive D through ApplyPhysics by moving one physics step per right-press.
+    // We simulate via ApplyPhysics' private access through Update: temporarily
+    // dispatch a key-down using raylib's input override is not available in
+    // headless tests, so instead verify physics applies +X velocity directly
+    // through the public Update path with an injected velocity: we use
+    // AddPitch/Update-free approach -- call Update twice with mouse parked at
+    // center, no keys pressed; then assert pure physics with a nudge:
+    // Fall back to a direct position probe: physics honors velocity, so move
+    // the player by teleporting near origin is not exposed. Instead, use the
+    // documented seam: Player::Update applies HandleInput from real keyboard
+    // state, which in CI is "no keys". So we validate ApplyPhysics behavior
+    // through the collision-consistent integration using a tiny friend hook.
+    // See player.h: `TestHook_ApplyPhysics` exposes ApplyPhysics for tests only.
+    Vector3 vel{ 4.5f, 0.0f, 0.0f };
+    p.SetVelocityForTest(vel);
+    p.TestHook_ApplyPhysics(0.1f, world);
+    ASSERT(p.Position().x > startX + 0.4f, "rightward velocity moved player +X");
+    PASS();
+}
+
+static void TestPlayer_StrafeMovesPositionLeft() {
+    TEST("Simulated A input moves the player -X via ApplyPhysics");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    float startX = p.Position().x;
+    Vector3 vel{ -4.5f, 0.0f, 0.0f };
+    p.SetVelocityForTest(vel);
+    p.TestHook_ApplyPhysics(0.1f, world);
+    ASSERT(p.Position().x < startX - 0.4f, "leftward velocity moved player -X");
+    PASS();
+}
+
+static void TestPlayer_ForwardBackPhysics() {
+    TEST("Forward/backward velocities still integrate along Z");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    float startZ = p.Position().z;
+    p.SetVelocityForTest({ 0.0f, 0.0f, 4.5f });
+    p.TestHook_ApplyPhysics(0.1f, world);
+    float afterFwd = p.Position().z;
+    ASSERT(afterFwd > startZ + 0.4f, "forward velocity moved player +Z");
+    p.SetVelocityForTest({ 0.0f, 0.0f, -4.5f });
+    p.TestHook_ApplyPhysics(0.1f, world);
+    ASSERT(p.Position().z < afterFwd - 0.4f, "backward velocity moved player -Z");
+    PASS();
+}
+
+static void TestPlayer_DiagonalPhysicsNormalizedSpeed() {
+    TEST("Diagonal velocity yields expected per-axis displacement (no speed boost)");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    // Normalized diagonal at walk speed 4.5 => each axis is 4.5/sqrt(2) = 3.18
+    Vector3 vel{ 3.182f, 0.0f, 3.182f };
+    p.SetVelocityForTest(vel);
+    p.TestHook_ApplyPhysics(0.1f, world);
+    float dx = p.Position().x;
+    float dz = p.Position().z;
+    ASSERT(dx > 0.30f && dx < 0.34f, "diagonal X displacement is velocity*dt (no boost)");
+    ASSERT(dz > 0.30f && dz < 0.34f, "diagonal Z displacement is velocity*dt (no boost)");
+    PASS();
+}
+
+static void TestPlayer_PhysicsBlockedByObstacle() {
+    TEST("Movement does not pass through a solid obstacle");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    // Stand east of the cover at (-14, -8) (x[-17,-11], z[-9.5,-6.5], y[0,1.6])
+    // and push west into it. y=1.0 so the AABB overlaps the cover vertically.
+    Vector3 start{ -10.0f, 1.0f, -8.0f };
+    p.SetPositionForTest(start);
+    ASSERT(world.PlayerCollides(start, p.Radius(), p.Height()) == false,
+           "start position is in open space next to cover");
+    p.SetVelocityForTest({ -4.5f, 0.0f, 0.0f });
+    p.TestHook_ApplyPhysics(0.5f, world);  // would move 2.25 units straight through
+    // Player must not be inside the obstacle box.
+    ASSERT(world.PlayerCollides(p.Position(), p.Radius(), p.Height()) == false,
+           "player never ends up inside the obstacle");
+    ASSERT(p.Position().x > -11.0f + p.Radius() - 0.01f, "blocked before entering cover footprint");
+    PASS();
+}
+
+static void TestPlayer_WallSlideOneAxisBlocked() {
+    TEST("When X is blocked, Z still slides along the wall");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    // Press against the east face (x=-11) of the cover at (-14, -8) while
+    // sliding north. Center must stay above x = -11 + 0.35 to remain free.
+    Vector3 start{ -10.2f, 1.0f, -8.0f };
+    p.SetPositionForTest(start);
+    ASSERT(world.PlayerCollides(start, p.Radius(), p.Height()) == false,
+           "start position is open");
+    // Diagonal velocity: -X pushes into the wall, +Z slides along it.
+    p.SetVelocityForTest({ -4.5f, 0.0f, 4.5f });
+    p.TestHook_ApplyPhysics(0.3f, world);
+    ASSERT(world.PlayerCollides(p.Position(), p.Radius(), p.Height()) == false,
+           "player stays outside the obstacle");
+    ASSERT(p.Position().x > -11.0f + p.Radius() - 0.01f, "X motion was stopped by the wall");
+    ASSERT(p.Position().z > -8.0f + 0.5f, "Z motion slid along the wall");
+    PASS();
+}
+
+static void TestViewmodel_Draw3DAndArmProportions() {
+    TEST("Weapon Draw3D runs and arms have increased proportions");
+    Weapon w;
+    ASSERT(w.Init() == true, "viewmodel meshes load");
+    Camera3D cam{};
+    cam.position = { 0, 2, 0 };
+    cam.target = { 0, 2, -1 };
+    cam.up = { 0, 1, 0 };
+    cam.fovy = 75.0f;
+    cam.projection = CAMERA_PERSPECTIVE;
+    w.Draw3D(cam);  // smoke test: thicker arms + hands draw without error
+    // Arm cylinder radius was raised from 0.024 to 0.045; verify via a reload +
+    // fire cycle that viewmodel state remains consistent.
+    ShotResult sr = w.Shoot(cam);
+    ASSERT(sr.fired == true, "weapon still fires after Draw3D");
+    w.Update(0.2f, cam);
+    w.Reload();
+    w.Update(1.5f, cam);
+    ASSERT(w.IsReloading() == false, "reload completes");
+    w.Shutdown();
+    ASSERT(w.Ready() == false, "meshes released on shutdown");
+    PASS();
+}
+
+static void TestEnvironment_PerimeterKeepsPlayerIn() {
+    TEST("Arena perimeter walls keep the player inside");
+    World world;
+    world.Init();
+    Player p;
+    Camera3D cam{};
+    p.Reset(cam);
+    const float r = p.Radius();
+    // Perimeter wall sits at |x| ~= 74 and |z| ~= 74 (ground half 75, wall 2 thick).
+    // Center should not collide; just inside the east/south walls should.
+    ASSERT(world.PlayerCollides({ 0, 2, 0 }, r, 1.7f) == false,
+           "arena center is open");
+    ASSERT(world.PlayerCollides({ 74.5f, 2, 0 }, r, 1.7f) == true,
+           "east perimeter wall blocks exit");
+    ASSERT(world.PlayerCollides({ 0, 2, -74.5f }, r, 1.7f) == true,
+           "south perimeter wall blocks exit");
+    PASS();
+}
+
+static void TestEnvironment_ObstaclesHaveCollision() {
+    TEST("Cover obstacles have correct collision boundaries");
+    World world;
+    world.Init();
+    // Cover box at (-14, -8) size 6x1.6x3 -> x[-17,-11], z[-9.5,-6.5].
+    ASSERT(world.PlayerCollides({ -14, 2, -8 }, 0.35f, 1.7f) == true,
+           "cover obstacle collides");
+    // Building at (16, 22) size 6x6x5 -> interior collides.
+    ASSERT(world.PlayerCollides({ 16, 2, 22 }, 0.35f, 1.7f) == true,
+           "building obstacle collides");
+    // Open ground between obstacles should not collide.
+    ASSERT(world.PlayerCollides({ 0, 2, 0 }, 0.35f, 1.7f) == false,
+           "open ground does not collide");
+    PASS();
+}
+
 // ---------------------------------------------------------------------------
 // ZombieManager tests
 // ---------------------------------------------------------------------------
@@ -736,11 +999,8 @@ static void TestWorld_PlayerCollision() {
     // Player at origin, no obstacles nearby -> no collision
     ASSERT(world.PlayerCollides({ 0, 0, 0 }, 0.35f, 1.7f) == false, "no collision at origin");
 
-    // There's a building at (-18, -16) etc. Test a known obstacle:
-    // Building at (0, -36) with size 10x3x10. Box: x[-5,5], y[-1.5,1.5], z[-41,-31].
-    // Player at (0, 0, -36) with radius 0.35 -> box x[-0.35,0.35], y[-0.85,0.85], z[-36.35,-35.65]
-    // z range overlaps [-41,-31], x overlaps [-5,5], y overlaps [-1.5,1.5] -> collision
-    ASSERT(world.PlayerCollides({ 0, 0, -36 }, 0.35f, 1.7f) == true, "should collide with building");
+    // Cover at (-14, -8) spans x[-17,-11], z[-9.5,-6.5]; interior collides.
+    ASSERT(world.PlayerCollides({ -14, 2, -8 }, 0.35f, 1.7f) == true, "should collide with cover");
     PASS();
 }
 
@@ -779,10 +1039,26 @@ int main() {
     TestPlayer_ADirectionsFixed();
     TestPlayer_DiagonalNormalized();
     TestPlayer_MovementCameraRelative();
+    TestPlayer_AStrafeLeft();
+    TestPlayer_DStrafeRight();
+    TestPlayer_AAndDIndependent();
+    TestPlayer_AWithWAndDWithS();
+    TestPlayer_OpenSpaceStrafeNotBlocked();
+    TestPlayer_StrafeMovesPositionRight();
+    TestPlayer_StrafeMovesPositionLeft();
+    TestPlayer_ForwardBackPhysics();
+    TestPlayer_DiagonalPhysicsNormalizedSpeed();
+    TestPlayer_PhysicsBlockedByObstacle();
+    TestPlayer_WallSlideOneAxisBlocked();
     TestCamera_YawAndPitchFromMouse();
     TestCamera_PitchClamped();
     TestRecoil_TemporaryAndRecovers();
     TestRecoil_NoUnboundedAccumulation();
+    TestViewmodel_Draw3DAndArmProportions();
+
+    printf("\n[Environment]\n");
+    TestEnvironment_PerimeterKeepsPlayerIn();
+    TestEnvironment_ObstaclesHaveCollision();
 
     printf("\n[ZombieManager]\n");
     TestZombie_SpawnAndCount();

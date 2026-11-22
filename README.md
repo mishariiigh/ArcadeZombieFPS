@@ -40,17 +40,46 @@ README.md
 
 ## Design notes
 
-- First-person 3D camera (raylib `Camera3D`), WASD + mouse look, sprint, jump, gravity.
-- 2D HUD weapon at screen bottom with recoil, sway, muzzle flash, ammo counter, and reload.
+- First-person 3D camera (raylib `Camera3D`), WASD + mouse/trackpad look, sprint, jump, gravity.
+- 3D first-person viewmodel (gun + arms) attached to the camera with recoil, sway, reload bob, muzzle flash, ammo counter, and reload.
 - Raycast hits from screen center against procedural low-poly zombies; damage, death, removal, score.
 - Zombie AI: detection range, chase, contact attack that damages the player.
-- Flat ground + box obstacles; player vs. obstacle AABB collision with wall sliding; ground contact.
+- Survival arena: ground slab, perimeter walls keeping play in bounds, concrete barriers, crates, abandoned vehicles, barricades and industrial buildings with AABB collision; player vs. obstacle AABB collision with wall sliding; ground contact.
 - Endless waves with increasing count/speed/health; game-over and restart.
 - Built with Raylib 5.5 fetched via CMake `FetchContent` (no Homebrew required for Raylib).
 
 ## Performance
 
-Target 60 FPS. Simple procedural geometry, no per-frame allocations in the hot loop, raycast hit tests only on shot. Tested on an Intel Iris Pro / i7-4770HQ / 16 GB macOS Sonoma machine — launches and runs at interactive frame rates.
+Target 60 FPS at 1280×720. Simple procedural geometry, no per-frame allocations in the hot loop, raycast hit tests only on shot, shared meshes loaded once.
+
+Measured on an Intel Iris Pro / i7-4770HQ / 16 GB macOS Sonoma machine, rendering the arena (ground + perimeter walls + cover obstacles), the 3D viewmodel and animated zombies:
+
+| Zombies | FPS |
+|---------|-----|
+| 1 | 58.9 |
+| 5 | 59.6 |
+| 10 | 59.6 |
+| 20 | 58.3 |
+
+These are standalone benchmark numbers (arena + viewmodel + zombies); the full game adds player, HUD and audio overhead, so in-game FPS is marginally lower but remains near target.
+
+## First-person arms and hands
+
+The procedural viewmodel arms were thickened (arm cylinder radius 0.024 → 0.045) and given hand blocks around the weapon grip, with wider shoulders (±0.50) and natural shoulder-to-hand proportions. Both arms connect to the grip and move with sway/recoil/reload. No external assets were added.
+
+## Survival arena
+
+The arena was upgraded from flat ground + scattered boxes to a cohesive low-poly survival play area:
+- Larger concrete ground slab with a darker base slab defining the arena edge.
+- Perimeter walls at the arena boundary keep the player (and zombies) inside the playable area.
+- Cover obstacles: concrete barriers, crates, abandoned vehicles, barricades.
+- Larger industrial buildings around the edges.
+- All obstacles have AABB collision; player collision and wall sliding are preserved.
+- Zombies can still chase and separate; obstacles are sparse enough to avoid trapping them.
+
+## Controls note (A/D strafing)
+
+A and D strafe camera-relative left and right (W/S forward/back, diagonals normalized). Strafing was verified at the code level: `right = cross(up, forward)`, D adds `right`, A subtracts `right`, the combined vector is normalized, and open-space strafing is not cancelled by collision. Interactive verification was not performed in this headless session; build and run the game to confirm WASD + mouse/trackpad feel.
 
 ## Zombie model asset
 

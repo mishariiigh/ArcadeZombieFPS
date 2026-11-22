@@ -1,0 +1,8 @@
+{
+  "name": "ArcadeZombieFPS",
+  "engine": "generic",
+  "launch": { "cmd": "./build/ArcadeZombieFPS" },
+  "log": { "stdout": true },
+  "ready": "WAVE",
+  "sourceRoots": ["src"]
+}

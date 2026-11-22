@@ -30,6 +30,7 @@ public:
 private:
     std::vector<Obstacle> obstacles;
     Vector3 groundCenter{ 0, 0, 0 };
-    Vector3 groundSize{ 120, 1, 120 };
-    Color groundColor{ 70, 90, 60, 255 };
+    Vector3 groundSize{ 150, 1, 150 };
+    Color groundColor{ 62, 58, 54, 255 };        // cracked asphalt
+    Color groundBaseColor{ 40, 38, 35, 255 };    // dark under-layer
 };

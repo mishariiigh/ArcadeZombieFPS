@@ -167,17 +167,21 @@ void Weapon::Draw3D(const Camera3D& camera) {
     // Grip (below the body)
     DrawBox( offset(0.0f, -0.10f, -0.04f), { 0.10f, 0.14f, 0.10f }, grip);
 
-    // Arms: shoulders (lower corners) -> hands (near the grip)
-    Vector3 shoulderL = Vector3Add(camera.position, Vector3Scale(forward, 0.25f));
-    shoulderL = Vector3Add(shoulderL, Vector3Scale(right, -0.42f));
-    shoulderL = Vector3Add(shoulderL, Vector3Scale(up, -0.34f));
-    Vector3 shoulderR = Vector3Add(camera.position, Vector3Scale(forward, 0.25f));
-    shoulderR = Vector3Add(shoulderR, Vector3Scale(right, 0.42f));
-    shoulderR = Vector3Add(shoulderR, Vector3Scale(up, -0.34f));
-    Vector3 handL = offset(-0.09f, -0.14f, 0.02f);
-    Vector3 handR = offset(0.09f, -0.14f, 0.02f);
-    DrawCyl( shoulderL, handL, 0.024f, arm);
-    DrawCyl( shoulderR, handR, 0.024f, arm);
+    // Arms: shoulders (lower corners) -> hands (wrapped around the grip)
+    float armRadius = 0.045f;
+    Vector3 shoulderL = Vector3Add(camera.position, Vector3Scale(forward, 0.20f));
+    shoulderL = Vector3Add(shoulderL, Vector3Scale(right, -0.50f));
+    shoulderL = Vector3Add(shoulderL, Vector3Scale(up, -0.36f));
+    Vector3 shoulderR = Vector3Add(camera.position, Vector3Scale(forward, 0.20f));
+    shoulderR = Vector3Add(shoulderR, Vector3Scale(right, 0.50f));
+    shoulderR = Vector3Add(shoulderR, Vector3Scale(up, -0.36f));
+    Vector3 handL = offset(-0.055f, -0.115f, 0.00f);
+    Vector3 handR = offset(0.055f, -0.115f, 0.00f);
+    DrawCyl(shoulderL, handL, armRadius, arm);
+    DrawCyl(shoulderR, handR, armRadius, arm);
+    Color hand{ 140, 108, 90, 255 };
+    DrawBox(handL, { 0.04f, 0.04f, 0.025f }, hand);
+    DrawBox(handR, { 0.04f, 0.04f, 0.025f }, hand);
 
     // Muzzle flash at the barrel tip
     if (muzzleFlashTimer > 0.0f) {

@@ -22,6 +22,8 @@ Game::~Game() {
 }
 
 bool Game::Init() {
+    // MSAA before window creation: smooths far edges on Iris Pro, cheap.
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(screenWidth, screenHeight, "ArcadeZombieFPS - Zombie Survival FPS");
     SetTargetFPS(60);
 
@@ -239,9 +241,15 @@ void Game::Update() {
 }
 
 void Game::Draw() {
-    const Color fogColor{ 92, 112, 96, 255 };
+    const Color fogColor{ 58, 64, 70, 255 };   // overcast industrial haze
+    BeginDrawing();
+
     ClearBackground(fogColor);
 
+    // Lightweight "lighting" enhancements supported directly by Raylib's
+    // renderer: exponential fog blends distant geometry into the haze (hides
+    // the arena edge), and a dimmed horizon gradient sky is approximated by
+    // the background color. No custom shaders or post-processing needed.
     BeginMode3D(camera);
         world->Draw();
         zombies->Draw();

@@ -93,9 +93,8 @@ void Player::ResetMouseLook() {
 void Player::ApplyPhysics(float dt, const World& world) {
     // Horizontal movement with wall sliding
     Vector3 tryX = { position.x + velocity.x * dt, position.y, position.z };
-    Vector3 tryZ = { position.x, position.y, position.z + velocity.z * dt };
-
     if (!world.PlayerCollides(tryX, radius, height)) position = tryX;
+    Vector3 tryZ = { position.x, position.y, position.z + velocity.z * dt };
     if (!world.PlayerCollides(tryZ, radius, height)) position = tryZ;
 
     // Vertical movement + gravity

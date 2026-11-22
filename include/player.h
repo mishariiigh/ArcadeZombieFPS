@@ -23,6 +23,13 @@ public:
     float Height() const { return height; }
     Vector3 Forward() const;
 
+    // --- Test-only seam (used by tests/test_gameplay.cpp) -------------------
+    // Lets regression tests drive ApplyPhysics with a known velocity instead
+    // of polling real keyboard state. Not used by game code.
+    void SetVelocityForTest(const Vector3& v) { velocity = v; }
+    void SetPositionForTest(const Vector3& p) { position = p; }
+    void TestHook_ApplyPhysics(float dt, const class World& world) { ApplyPhysics(dt, world); }
+
 private:
     void HandleInput(float dt, Camera3D& camera);
     void ApplyPhysics(float dt, const class World& world);
