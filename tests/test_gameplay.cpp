@@ -988,6 +988,305 @@ static void TestAudio_MusicControl() {
 }
 
 // ---------------------------------------------------------------------------
+// Navigation tests
+// ---------------------------------------------------------------------------
+
+static void TestNavigation_BuildAndWalkable() {
+    TEST("Navigation grid builds and marks walkable cells");
+    World world;
+    world.Init();
+    Navigation nav;
+    nav.Build(world.Obstacles(), 75.0f, 1.0f);
+
+    ASSERT(nav.Ready() == true, "navigation should be ready after build");
+    ASSERT(nav.GridWidth() > 0 && nav.GridDepth() > 0, "grid should have dimensions");
+    ASSERT(nav.IsWalkable({ 0, 0, 0 }) == true, "arena center should be walkable");
+    ASSERT(nav.IsWalkable({ -14, 0, -8 }) == false, "cover at (-14,-8) should be blocked");
+    PASS();
+}
+
+static void TestNavigation_FindPathOpenSpace() {
+    TEST("Navigation finds path in open space");
+    World world;
+    world.Init();
+    Navigation nav;
+    nav.Build(world.Obstacles(), 75.0f, 1.0f);
+
+    std::vector<Vector3> path = nav.FindPath({ 10, 0, 10 }, { -10, 0, -10 });
+    ASSERT(path.size() >= 2, "path should have at least start and end");
+    ASSERT(Vector3Distance(path.front(), { 10, 0, 10 }) < 1.5f, "path should start near start pos");
+    ASSERT(Vector3Distance(path.back(), { -10, 0, -10 }) < 1.5f, "path should end near goal pos");
+    PASS();
+}
+
+static void TestNavigation_FindPathAroundWall() {
+    TEST("Navigation finds path around a wall");
+    World world;
+    world.Init();
+    Navigation nav;
+    nav.Build(world.Obstacles(), 75.0f, 1.0f);
+
+    // Building at (0, -36) size 10x3x10 -> x[-5,5], z[-41,-31]
+    // Go from south (z=-30) to north (z=-42) of building
+    std::vector<Vector3> path = nav.FindPath({ 0, 0, -30 }, { 0, 0, -42 });
+    ASSERT(path.size() >= 2, "path should exist around building");
+    // Path should go around (not through) the building - building spans x[-5,5]
+    bool goesAround = false;
+    for (const auto& wp : path) {
+        if (wp.x < -5.0f || wp.x > 5.0f) {
+            goesAround = true;
+            break;
+        }
+    }
+    ASSERT(goesAround == true, "path should go around building, not through it");
+    PASS();
+}
+
+static void TestNavigation_FindPathAroundCover() {
+    TEST("Navigation finds path around cover object");
+    World world;
+    world.Init();
+    Navigation nav;
+    nav.Build(world.Obstacles(), 75.0f, 1.0f);
+
+    // Cover at (-14, -8) size 6x1.6x3 -> x[-17,-11], z[-9.5,-6.5]
+    // Go from west to east of cover
+    std::vector<Vector3> path = nav.FindPath({ -20, 0, -8 }, { -8, 0, -8 });
+    ASSERT(path.size() >= 2, "path should exist around cover");
+    // Path should go around (north or south) the cover - cover spans z[-9.5, -6.5]
+    bool goesAround = false;
+    for (const auto& wp : path) {
+        if (wp.z < -9.5f || wp.z > -6.5f) {
+            goesAround = true;
+            break;
+        }
+    }
+    ASSERT(goesAround == true, "path should go around cover, not through it");
+    PASS();
+}
+
+static void TestNavigation_BlockedStartOrGoal() {
+    TEST("Navigation handles blocked start or goal positions");
+    World world;
+    world.Init();
+    Navigation nav;
+    nav.Build(world.Obstacles(), 75.0f, 1.0f);
+
+    // Start inside a building (blocked)
+    std::vector<Vector3> path = nav.FindPath({ 0, 0, -36 }, { 20, 0, 0 });
+    // Should find path from nearest walkable to goal
+    ASSERT(path.size() >= 1, "should find path from nearest walkable");
+    PASS();
+}
+
+static void TestNavigation_UnreachableDestination() {
+    TEST("Navigation handles unreachable destination safely");
+    World world;
+    world.Init();
+    Navigation nav;
+    nav.Build(world.Obstacles(), 75.0f, 1.0f);
+
+    // Goal completely surrounded by obstacles (not possible in current arena,
+    // but test with a position far outside arena)
+    std::vector<Vector3> path = nav.FindPath({ 0, 0, 0 }, { 1000, 0, 1000 });
+    // Should return empty path for out-of-bounds
+    ASSERT(path.empty() == true, "out of bounds goal should return empty path");
+    PASS();
+}
+
+static void TestZombie_NavigationPursuitOpenSpace() {
+    TEST("Zombie pursues player in open space using navigation");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 10, 0, 0 }, 3, 2.0f);
+
+    Vector3 playerPos{ 0, 0, 0 };
+    // Update several frames
+    for (int i = 0; i < 10; ++i) {
+        zm.Update(0.1f, playerPos, 0.35f);
+    }
+
+    auto zombies = zm.Zombies();
+    ASSERT(zombies[0].position.x < 10.0f, "zombie should move closer to player");
+    ASSERT(zombies[0].position.x > 0.0f, "zombie should not pass player");
+    ASSERT(zombies[0].hasValidPath == true, "zombie should have valid path");
+    PASS();
+}
+
+static void TestZombie_NavigationAroundObstacle() {
+    TEST("Zombie navigates around obstacle to reach player");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+
+    // Place zombie west of cover at (-14, -8), player east of cover
+    // Cover spans x[-17,-11], z[-9.5,-6.5]
+    // Zombie at (-15, 0, -12) - west and south of cover (dist to origin ~19, within detectRange 18? No, 19>18)
+    // Use (-12, 0, -10) - dist to origin ~15.6, within detectRange
+    // But (-12, -10) might be inside cover? Cover x[-17,-11], z[-9.5,-6.5]. x=-12 is in [-17,-11], z=-10 is in [-9.5,-6.5]. YES, inside!
+    // Use (-10, 0, -12) - x=-10 (east of cover), z=-12 (south of cover). Dist = sqrt(100+144)=15.6
+    // Player at (5, 0, 0) - east of cover. Dist from zombie = sqrt(15^2 + 12^2) = 19.2
+    // Actually, let's put player at (0,0) and zombie at (-12, 0, -8) - dist = sqrt(144+64)=14.4
+    // But (-12, -8) is inside cover (x=-12 in [-17,-11], z=-8 in [-9.5,-6.5]).
+    // Use (-10, 0, -8) - just east of cover. Dist to origin = 12.8.
+    // Player at (-5, 0, 0) - west of zombie? No.
+    // Let's put zombie at (-15, 0, -12) - dist to origin = 19.2 > 18. Too far.
+    // Zombie at (-12, 0, -10) - inside cover.
+    // Zombie at (-10, 0, -12) - east of cover, south. Dist to (0,0) = 15.6. Good.
+    // Player at (0, 0, 0). Path from (-10, -12) to (0, 0) goes northeast, passing near cover at (-14, -8).
+    // Cover spans x[-17,-11], z[-9.5,-6.5]. The line from (-10, -12) to (0, 0): at x=-11, t=1/10=0.1, z=-12+1.2=-10.8. Cover z starts at -9.5, so z=-10.8 is south of cover. Path passes south of cover!
+    // So no obstacle in the way.
+    
+    // To force path around cover, need zombie and player on opposite sides of cover.
+    // Zombie at (-20, 0, -8) - west of cover (x=-20 < -17), z=-8 (within cover z-range). Dist to origin = 21.5 > 18.
+    // Zombie at (-15, 0, -8) - west of cover (x=-15 in [-17,-11]? No, -15 is in [-17,-11]. Inside cover!)
+    // Zombie at (-18, 0, -8) - west of cover (x=-18 < -17). Dist to origin = 19.7 > 18.
+    // Zombie at (-16, 0, -10) - west and south of cover. x=-16 in [-17,-11]? Yes, inside cover x-range. z=-10 in [-9.5,-6.5]? Yes, inside cover z-range. Inside!
+    // Zombie at (-18, 0, -10) - x=-18 < -17 (west), z=-10 in cover z-range. Dist = sqrt(324+100)=20.6 > 18.
+    
+    // OK, the cover is too close to origin for a zombie to be on opposite side within detectRange.
+    // Let's use a building instead. Building at (0, -36) spans x[-5,5], z[-41,-31].
+    // Zombie at (0, 0, -30) - south of building. Player at (0, 0, -42) - north of building.
+    // Dist from zombie to player = 12. Within detectRange.
+    // Path must go around building (east or west).
+    zm.Spawn({ 0, 0, -30 }, 3, 2.0f);
+
+    Vector3 playerPos{ 0, 0, -42 };
+    // Update many frames to allow pathfinding around building
+    for (int i = 0; i < 150; ++i) {
+        zm.Update(0.1f, playerPos, 0.35f);
+    }
+
+    auto zombies = zm.Zombies();
+    // Zombie should have moved significantly toward player
+    float distToPlayer = Vector3Distance(zombies[0].position, playerPos);
+    ASSERT(distToPlayer < 12.0f, "zombie should move closer to player");
+    PASS();
+}
+
+static void TestZombie_NavigationRecalculation() {
+    TEST("Zombie recalculates path when player moves significantly");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    // Zombie at (10, 10), player at (0, 0) - dist = 14.1 < 18
+    zm.Spawn({ 10, 0, 10 }, 3, 2.0f);
+
+    Vector3 playerPos{ 0, 0, 0 };
+    // Let zombie start pathfinding
+    for (int i = 0; i < 5; ++i) {
+        zm.Update(0.1f, playerPos, 0.35f);
+    }
+
+    auto zombies = zm.Zombies();
+    Vector3 oldPathTarget = zombies[0].lastPathTarget;
+
+    // Move player significantly but within detectRange
+    // New player pos (-10, -10) - dist from zombie (~9,9) = ~27 > 18? No, zombie at (10,10) moves toward (0,0).
+    // After 5 frames, zombie at ~(9,9). Player moves to (-5, -5). Dist = sqrt(14^2+14^2)=19.8 > 18.
+    // Player at (-4, -4). Dist from (9,9) = sqrt(13^2+13^2)=18.4 > 18.
+    // Player at (-3, -3). Dist from (9,9) = sqrt(12^2+12^2)=17.0 < 18. Good.
+    // But need player to move > 3 units from oldPathTarget (0,0). (-3,-3) is 4.2 units from (0,0). Good.
+    playerPos = { -3, 0, -3 };
+    for (int i = 0; i < 10; ++i) {
+        zm.Update(0.1f, playerPos, 0.35f);
+    }
+
+    zombies = zm.Zombies();
+    // Path should have been recalculated (new target)
+    ASSERT(Vector3Distance(zombies[0].lastPathTarget, oldPathTarget) > 3.0f,
+           "path target should update when player moves far");
+    PASS();
+}
+
+static void TestZombie_NavigationStuckRecovery() {
+    TEST("Zombie stuck detection triggers recovery");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+
+    // Spawn zombie near cover but in walkable area
+    // Cover at (-14, -8) spans x[-17,-11], z[-9.5,-6.5]
+    // Spawn at (-10, 0, -8) - just east of cover
+    zm.Spawn({ -10, 0, -8 }, 3, 2.0f);
+
+    Vector3 playerPos{ 0, 0, 0 };
+    // Update many frames
+    for (int i = 0; i < 50; ++i) {
+        zm.Update(0.1f, playerPos, 0.35f);
+    }
+
+    auto zombies = zm.Zombies();
+    // Zombie should not be permanently stuck
+    // Either it has a valid path or it's close to player
+    ASSERT(zombies[0].hasValidPath == true || Vector3Distance(zombies[0].position, playerPos) < 10.0f,
+           "zombie should recover from stuck state or reach player");
+    PASS();
+}
+
+static void TestZombie_MultipleSeparation() {
+    TEST("Multiple zombies maintain separation while navigating");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+
+    // Spawn multiple zombies at same position
+    for (int i = 0; i < 5; ++i) {
+        zm.Spawn({ 15, 0, 0 }, 3, 2.0f);
+    }
+
+    Vector3 playerPos{ 0, 0, 0 };
+    for (int i = 0; i < 50; ++i) {
+        zm.Update(0.1f, playerPos, 0.35f);
+    }
+
+    auto zombies = zm.Zombies();
+    // Check that zombies are separated
+    bool allSeparated = true;
+    for (size_t i = 0; i < zombies.size(); ++i) {
+        for (size_t j = i + 1; j < zombies.size(); ++j) {
+            float dist = Vector3Distance(zombies[i].position, zombies[j].position);
+            float minDist = zombies[i].radius + zombies[j].radius;
+            if (dist < minDist * 0.8f) { // Allow some overlap during movement
+                allSeparated = false;
+            }
+        }
+    }
+    ASSERT(allSeparated == true, "zombies should maintain separation");
+    PASS();
+}
+
+static void TestZombie_AttackBehaviorPreserved() {
+    TEST("Zombie attack behavior preserved with navigation");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 0.5f, 0, 0 }, 3, 2.0f);  // Very close to player
+
+    Vector3 playerPos{ 0, 0, 0 };
+    int dmg = zm.Update(0.0f, playerPos, 0.35f);
+    ASSERT(dmg > 0, "close zombie should deal damage");
+
+    // Second call should have cooldown
+    dmg = zm.Update(0.0f, playerPos, 0.35f);
+    ASSERT(dmg == 0, "attack cooldown should prevent repeated damage");
+    PASS();
+}
+
+// ---------------------------------------------------------------------------
 // World tests (collision)
 // ---------------------------------------------------------------------------
 
@@ -1071,6 +1370,20 @@ int main() {
     TestZombie_AnimationIndicesResolved();
     TestZombie_MultipleZombiesRender();
     TestZombie_DeathAndRemoval();
+
+    printf("\n[Navigation]\n");
+    TestNavigation_BuildAndWalkable();
+    TestNavigation_FindPathOpenSpace();
+    TestNavigation_FindPathAroundWall();
+    TestNavigation_FindPathAroundCover();
+    TestNavigation_BlockedStartOrGoal();
+    TestNavigation_UnreachableDestination();
+    TestZombie_NavigationPursuitOpenSpace();
+    TestZombie_NavigationAroundObstacle();
+    TestZombie_NavigationRecalculation();
+    TestZombie_NavigationStuckRecovery();
+    TestZombie_MultipleSeparation();
+    TestZombie_AttackBehaviorPreserved();
 
     printf("\n[Audio]\n");
     TestAudio_InitAndShutdown();

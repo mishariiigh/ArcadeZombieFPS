@@ -25,6 +25,7 @@ add_executable(ArcadeZombieFPS
     src/weapon.cpp
     src/zombie.cpp
     src/world.cpp
+    src/navigation.cpp
 )
 
 target_include_directories(ArcadeZombieFPS PRIVATE include)

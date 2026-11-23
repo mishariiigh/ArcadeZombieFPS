@@ -1,12 +1,12 @@
 #include "zombie.h"
+#include "world.h"
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include "raymath.h"
 
 namespace {
-// Project-relative locations the shared zombie model may be loaded from.
-// The game is launched from build/ (per README), so ../assets/... is the
-// primary path; assets/models/ is tried for runs from the project root.
+
 const char* ResolveModelPath(const char* preferred) {
     static const char* candidates[] = {
         "assets/models/zombie.glb",
@@ -28,6 +28,7 @@ int FindAnimationIndex(ModelAnimation* animations, int count, const char* name) 
     }
     return -1;
 }
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,10 @@ void ZombieManager::Shutdown() {
     model.Shutdown();
 }
 
+void ZombieManager::InitNavigation(const World& world) {
+    navigation.Build(world.Obstacles(), 75.0f, 1.0f);
+}
+
 int ZombieManager::Update(float dt, const Vector3& playerPos, float playerRadius) {
     int damageToPlayer = 0;
 
@@ -97,7 +102,7 @@ int ZombieManager::Update(float dt, const Vector3& playerPos, float playerRadius
             if (dist < z.attackRange && z.attackCooldown <= 0.0f) {
                 damageToPlayer += z.attackDamage;
                 z.attackCooldown = z.attackInterval;
-                z.attackAnimTimer = 0.45f; // play the attack animation
+                z.attackAnimTimer = 0.45f;
             }
         }
 
@@ -108,7 +113,6 @@ int ZombieManager::Update(float dt, const Vector3& playerPos, float playerRadius
 
     SeparateZombies(dt);
 
-    // Remove fully-dead zombies
     zombies.erase(std::remove_if(zombies.begin(), zombies.end(),
         [](const Zombie& z) { return z.dying && z.deathTimer > 0.6f; }),
         zombies.end());
@@ -122,30 +126,23 @@ int ZombieManager::AliveCount() const {
     return n;
 }
 
-void ZombieManager::UpdateZombie(Zombie& z, float dt, const Vector3& playerPos, float /*playerRadius*/) {
+void ZombieManager::UpdateZombie(Zombie& z, float dt, const Vector3& playerPos, float playerRadius) {
     if (!z.alive || z.dying) return;
 
-    Vector3 toPlayer = Vector3Subtract(playerPos, z.position);
-    float dist = Vector3Length(toPlayer);
-
-    if (dist > 0.05f && dist < detectRange) {
-        Vector3 dir = Vector3Normalize(toPlayer);
-        z.faceAngle = atan2f(dir.x, dir.z);
-        // Stop just before the player so zombies don't occupy the same space
-        if (dist > z.attackRange + 0.35f) {
-            z.position = Vector3Add(z.position, Vector3Scale(dir, z.speed * dt));
-        }
-    }
+    UpdateZombieNavigation(z, dt, playerPos, playerRadius);
 
     // Keep the zombie on the ground plane
     z.position.y = 0.0f;
 
     // --- animation state driven by gameplay (only when the model is loaded) ---
     if (model.Ready()) {
+        Vector3 toPlayer = Vector3Subtract(playerPos, z.position);
+        float dist = Vector3Length(toPlayer);
+
         int target = model.animIdle;
         if (z.attackAnimTimer > 0.0f) {
             target = model.animAttack;
-        } else if (dist > 0.05f && dist < detectRange && dist > z.attackRange + 0.35f) {
+        } else if (z.hasValidPath && z.pathIndex < z.path.size() && dist > z.attackRange + 0.35f) {
             target = model.animWalk;
         }
         if (target < 0) target = model.animIdle;
@@ -160,19 +157,216 @@ void ZombieManager::UpdateZombie(Zombie& z, float dt, const Vector3& playerPos, 
         if (fc <= 0) fc = 1;
 
         if (z.attackAnimTimer > 0.0f) {
-            // Play the punch animation once over the attack window
             float prog = 1.0f - z.attackAnimTimer / 0.45f;
             if (prog < 0.0f) prog = 0.0f;
             if (prog > 1.0f) prog = 1.0f;
             z.animFrame = (int)(prog * (float)fc);
             if (z.animFrame >= fc) z.animFrame = fc - 1;
         } else {
-            // Looping idle / walk, advanced at ~30 fps (walk scaled by speed)
             float speedFactor = (z.animIdx == model.animWalk) ? (z.speed / 2.2f) : 1.0f;
             if (speedFactor < 0.0f) speedFactor = 0.0f;
             z.animFrame = (int)(z.animFrame + dt * 30.0f * speedFactor);
             while (z.animFrame >= fc) z.animFrame -= fc;
             if (z.animFrame < 0) z.animFrame = 0;
+        }
+    }
+}
+
+void ZombieManager::UpdateZombieNavigation(Zombie& z, float dt, const Vector3& playerPos, float playerRadius) {
+    Vector3 toPlayer = Vector3Subtract(playerPos, z.position);
+    float dist = Vector3Length(toPlayer);
+
+    // If player is out of detection range, idle
+    if (dist > detectRange) {
+        z.hasValidPath = false;
+        z.path.clear();
+        z.pathIndex = 0;
+        z.pathRecalcTimer = 0.0f;
+        z.stuckTimer = 0.0f;
+        return;
+    }
+
+    // Face the player (for animation orientation)
+    if (dist > 0.05f) {
+        Vector3 dir = Vector3Normalize(toPlayer);
+        z.faceAngle = atan2f(dir.x, dir.z);
+    }
+
+    // If close enough to attack, stop path following
+    if (dist <= z.attackRange + 0.35f) {
+        z.hasValidPath = false;
+        z.path.clear();
+        z.pathIndex = 0;
+        z.pathRecalcTimer = 0.0f;
+        z.stuckTimer = 0.0f;
+        z.lastPosition = z.position;
+        return;
+    }
+
+    // If navigation not ready, fall back to direct movement
+    if (!navigation.Ready()) {
+        if (dist > z.attackRange + 0.35f) {
+            Vector3 dir = Vector3Normalize(toPlayer);
+            z.position = Vector3Add(z.position, Vector3Scale(dir, z.speed * dt));
+        }
+        return;
+    }
+
+    // If no valid path, try direct movement as fallback (e.g., when pathfinding fails)
+    if (!z.hasValidPath || z.path.empty()) {
+        // Try to calculate path
+        RecalculatePath(z, playerPos);
+        // If still no path, move directly toward player as last resort
+        if (!z.hasValidPath && dist > z.attackRange + 0.35f) {
+            Vector3 dir = Vector3Normalize(toPlayer);
+            Vector3 newPos = Vector3Add(z.position, Vector3Scale(dir, z.speed * dt));
+            if (navigation.IsWalkable(newPos)) {
+                z.position = newPos;
+            }
+        }
+        return;
+    }
+
+    // Check if we need to recalculate path
+    bool needRecalc = false;
+
+    // First path calculation
+    if (!z.hasValidPath || z.path.empty()) {
+        needRecalc = true;
+    }
+    // Player moved significantly from last path target
+    else if (Vector3Distance(playerPos, z.lastPathTarget) > 3.0f) {
+        needRecalc = true;
+    }
+    // Periodic recalculation
+    else {
+        z.pathRecalcTimer += dt;
+        if (z.pathRecalcTimer > 2.0f) {
+            needRecalc = true;
+        }
+    }
+
+    // Current waypoint reached or invalid
+    if (z.hasValidPath && z.pathIndex < z.path.size()) {
+        Vector3 toWaypoint = Vector3Subtract(z.path[z.pathIndex], z.position);
+        toWaypoint.y = 0.0f;
+        float wpDist = Vector3Length(toWaypoint);
+
+        if (wpDist < 0.8f) {
+            z.pathIndex++;
+            if (z.pathIndex >= z.path.size()) {
+                needRecalc = true;
+            }
+        }
+    } else if (z.hasValidPath) {
+        needRecalc = true;
+    }
+
+    if (needRecalc) {
+        RecalculatePath(z, playerPos);
+    }
+
+    // Follow path if we have one
+    if (z.hasValidPath && z.pathIndex < z.path.size()) {
+        Vector3 targetWaypoint = z.path[z.pathIndex];
+        Vector3 toWaypoint = Vector3Subtract(targetWaypoint, z.position);
+        toWaypoint.y = 0.0f;
+        float wpDist = Vector3Length(toWaypoint);
+
+        if (wpDist > 0.05f) {
+            Vector3 dir = Vector3Normalize(toWaypoint);
+            Vector3 newPos = Vector3Add(z.position, Vector3Scale(dir, z.speed * dt));
+
+            // Check if new position is walkable
+            if (navigation.IsWalkable(newPos)) {
+                z.position = newPos;
+            } else {
+                // Path is blocked, need recalculation
+                z.hasValidPath = false;
+            }
+        }
+    }
+
+    // Stuck detection
+    if (z.hasValidPath) {
+        float moved = Vector3Distance(z.position, z.lastPosition);
+        if (moved < z.speed * dt * 0.3f) { // Less than 30% of expected movement
+            z.stuckTimer += dt;
+        } else {
+            z.stuckTimer = 0.0f;
+        }
+        z.lastPosition = z.position;
+
+        if (z.stuckTimer > 1.5f) {
+            HandleStuck(z, playerPos);
+        }
+    }
+}
+
+void ZombieManager::RecalculatePath(Zombie& z, const Vector3& playerPos) {
+    Vector3 start = z.position;
+    start.y = 0.0f;
+    Vector3 goal = playerPos;
+    goal.y = 0.0f;
+
+    z.path = navigation.FindPath(start, goal);
+    if (!z.path.empty()) {
+        z.pathIndex = 0;
+        z.hasValidPath = true;
+        z.lastPathTarget = playerPos;
+        z.pathRecalcTimer = 0.0f;
+        z.stuckTimer = 0.0f;
+        z.lastPosition = z.position;
+    } else {
+        // No path found - try to find a walkable position near the player
+        Vector3 nearest = navigation.GetNearestWalkable(goal);
+        if (Vector3Distance(nearest, goal) < 5.0f) {
+            z.path = navigation.FindPath(start, nearest);
+            if (!z.path.empty()) {
+                z.pathIndex = 0;
+                z.hasValidPath = true;
+                z.lastPathTarget = playerPos;
+                z.pathRecalcTimer = 0.0f;
+                z.stuckTimer = 0.0f;
+                z.lastPosition = z.position;
+            }
+        }
+
+        if (z.path.empty()) {
+            z.hasValidPath = false;
+            z.pathIndex = 0;
+        }
+    }
+}
+
+bool ZombieManager::IsStuck(const Zombie& z, float dt) const {
+    float moved = Vector3Distance(z.position, z.lastPosition);
+    return moved < z.speed * dt * 0.3f && z.stuckTimer > 1.5f;
+}
+
+void ZombieManager::HandleStuck(Zombie& z, const Vector3& playerPos) {
+    z.stuckTimer = 0.0f;
+
+    // Try to recalculate path
+    RecalculatePath(z, playerPos);
+
+    // If still no path, try to find any walkable direction
+    if (!z.hasValidPath) {
+        // Try a few random directions around the zombie
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            float angle = (float)attempt * (3.14159f / 4.0f);
+            Vector3 testDir{ std::sin(angle), 0.0f, std::cos(angle) };
+            Vector3 testPos = Vector3Add(z.position, Vector3Scale(testDir, 3.0f));
+            if (navigation.IsWalkable(testPos)) {
+                z.path = navigation.FindPath(z.position, testPos);
+                if (!z.path.empty()) {
+                    z.pathIndex = 0;
+                    z.hasValidPath = true;
+                    z.pathRecalcTimer = 0.0f;
+                    z.lastPosition = z.position;
+                    return;
+                }
+            }
         }
     }
 }
@@ -196,6 +390,13 @@ void ZombieManager::Spawn(const Vector3& position, int health, float speed) {
     z.animIdx = -1;
     z.animFrame = 0;
     z.faceAngle = 0.0f;
+    z.path.clear();
+    z.pathIndex = 0;
+    z.pathRecalcTimer = 0.0f;
+    z.lastPathTarget = { 0, 0, 0 };
+    z.stuckTimer = 0.0f;
+    z.lastPosition = position;
+    z.hasValidPath = false;
     zombies.push_back(z);
 }
 
@@ -204,7 +405,7 @@ void ZombieManager::Clear() {
 }
 
 void ZombieManager::SeparateZombies(float dt) {
-    const float repulsion = 6.0f; // units per second of separation push
+    const float repulsion = 6.0f;
     for (size_t i = 0; i < zombies.size(); ++i) {
         Zombie& a = zombies[i];
         if (!a.alive || a.dying) continue;
@@ -220,12 +421,18 @@ void ZombieManager::SeparateZombies(float dt) {
                 if (dist > 0.01f) {
                     dir = Vector3Normalize(diff);
                 } else {
-                    dir = { 1.0f, 0.0f, 0.0f }; // default push direction when exactly overlapping
+                    dir = { 1.0f, 0.0f, 0.0f };
                 }
                 float overlap = minDist - dist;
                 float push = overlap * 0.5f * repulsion * dt;
-                a.position = Vector3Add(a.position, Vector3Scale(dir, push));
-                b.position = Vector3Subtract(b.position, Vector3Scale(dir, push));
+                Vector3 pushA = Vector3Scale(dir, push);
+                Vector3 pushB = Vector3Scale(dir, -push);
+
+                // Only apply separation if the resulting positions are walkable
+                Vector3 newPosA = Vector3Add(a.position, pushA);
+                Vector3 newPosB = Vector3Add(b.position, pushB);
+                if (navigation.IsWalkable(newPosA)) a.position = newPosA;
+                if (navigation.IsWalkable(newPosB)) b.position = newPosB;
             }
         }
     }
@@ -293,15 +500,10 @@ void ZombieManager::DrawZombie(const Zombie& z) const {
     Color tint = WHITE;
     tint.a = alpha;
 
-    // Sink into the ground while dying
     Vector3 pos{ z.position.x, z.position.y - sink, z.position.z };
 
-    // Scale chosen so the model's ~1.05m width fits inside the 0.9m diameter
-    // collision bounds (radius 0.45), giving a height of ~1.76m vs 1.8m gameplay height.
     const float scale = 0.85f;
 
-    // Advance the shared skeleton to this zombie's pose, then draw it.
-    // Bone pose is transient per-instance render state.
     UpdateModelAnimation(model.model, model.animations[ai], frame);
     DrawModelEx(model.model, pos, { 0.0f, 1.0f, 0.0f },
                 z.faceAngle * RAD2DEG, { scale, scale, scale }, tint);

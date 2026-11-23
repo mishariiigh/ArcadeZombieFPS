@@ -1,9 +1,11 @@
 #pragma once
 
 #include "raylib.h"
+#include "navigation.h"
 #include <vector>
 
 class Player;
+class World;
 
 // Shared, loaded-once 3D zombie model (glTF 2.0) with skeletal animations.
 // One model + animation set is reused by every zombie instance.
@@ -24,7 +26,7 @@ struct ZombieModel {
     bool Init(const char* modelPath);
     // Unloads the model and animations. Safe to call on a default/unloaded model.
     void Shutdown();
-    bool Ready() const { return animCount > 0 && model.meshCount > 0; }
+    bool Ready() const { return animCount > 0 && model.meshCount > 0; };
 };
 
 struct Zombie {
@@ -48,6 +50,15 @@ struct Zombie {
     float faceAngle = 0.0f;         // yaw towards the player (radians)
     Color bodyColor{ 120, 160, 90, 255 };   // low-poly zombie green (kept for reference)
     Color headColor{ 100, 130, 70, 255 };
+
+    // Navigation state
+    std::vector<Vector3> path;          // current path waypoints (world coords, y=0)
+    size_t pathIndex = 0;               // current waypoint index in path
+    float pathRecalcTimer = 0.0f;       // time since last path recalculation
+    Vector3 lastPathTarget{ 0, 0, 0 };  // player position when path was calculated
+    float stuckTimer = 0.0f;            // time spent making insufficient progress
+    Vector3 lastPosition{ 0, 0, 0 };    // position at last stuck check
+    bool hasValidPath = false;          // whether current path is valid
 };
 
 class ZombieManager {
@@ -59,6 +70,9 @@ public:
     bool Init();
     // Unloads the shared model/animations. Call before window destruction.
     void Shutdown();
+
+    // Initialize navigation grid from world obstacles. Call after World::Init().
+    void InitNavigation(const World& world);
 
     int Update(float dt, const Vector3& playerPos, float playerRadius);
     void Draw() const;
@@ -73,6 +87,7 @@ public:
     int AliveCount() const;
     int TotalCount() const { return (int)zombies.size(); }
     bool ModelReady() const { return model.Ready(); }
+    const Navigation& GetNavigation() const { return navigation; }
 
     // Exposed for unit testing: separates overlapping zombies.
     void SeparateZombies(float dt);
@@ -80,9 +95,14 @@ public:
 private:
     std::vector<Zombie> zombies;
     ZombieModel model;
+    Navigation navigation;
     float detectRange = 18.0f;
 
     void UpdateZombie(Zombie& z, float dt, const Vector3& playerPos, float playerRadius);
+    void UpdateZombieNavigation(Zombie& z, float dt, const Vector3& playerPos, float playerRadius);
+    void RecalculatePath(Zombie& z, const Vector3& playerPos);
+    bool IsStuck(const Zombie& z, float dt) const;
+    void HandleStuck(Zombie& z, const Vector3& playerPos);
     void DrawZombie(const Zombie& z) const;
     int ResolveAnimationIndex(const char* name);
 };

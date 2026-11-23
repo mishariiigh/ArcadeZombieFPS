@@ -35,6 +35,9 @@ bool Game::Init() {
         // Non-fatal: zombies simply won't render until the asset is available.
     }
 
+    // Initialize navigation grid from world obstacles.
+    zombies->InitNavigation(*world);
+
     // Generate the 3D first-person viewmodel meshes.
     if (!weapon->Init()) {
         // Non-fatal: weapon will not render in 3D until meshes are available.
