@@ -48,6 +48,7 @@ bool ZombieModel::Init(const char* modelPath) {
     animCount = 0;
     animations = LoadModelAnimations(path, &animCount);
 
+    animHit = FindAnimationIndex(animations, animCount, "wave");
     animIdle = FindAnimationIndex(animations, animCount, "idle");
     animWalk = FindAnimationIndex(animations, animCount, "walk");
     animAttack = FindAnimationIndex(animations, animCount, "punch");
@@ -65,7 +66,7 @@ void ZombieModel::Shutdown() {
         UnloadModel(model);
     }
     model = {};
-    animIdle = animWalk = animAttack = animDeath = -1;
+    animIdle = animWalk = animAttack = animDeath = animHit = -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,25 +97,34 @@ int ZombieManager::Update(float dt, const Vector3& playerPos, float playerRadius
             z.attackAnimTimer -= dt;
             if (z.attackAnimTimer < 0.0f) z.attackAnimTimer = 0.0f;
         }
-
-        if (z.alive && !z.dying) {
-            float dist = Vector3Distance(z.position, playerPos);
-            if (dist < z.attackRange && z.attackCooldown <= 0.0f) {
-                damageToPlayer += z.attackDamage;
-                z.attackCooldown = z.attackInterval;
-                z.attackAnimTimer = 0.45f;
-            }
-        }
+        if (z.hitTimer > 0.0f) z.hitTimer -= dt;
 
         if (z.dying) {
             z.deathTimer += dt;
+        } else if (z.alive) {
+            // Attack starts the animation; damage lands at AttackImpactTime,
+            // and only once per swing (attackHitApplied guards the impact).
+            float dist = Vector3Distance(z.position, playerPos);
+            if (dist < z.attackRange && z.attackCooldown <= 0.0f) {
+                z.attackAnimTimer = Zombie::AttackDuration;
+                z.attackHitApplied = false;
+                z.attackCooldown = z.attackInterval;
+            }
+            if (z.attackAnimTimer > 0.0f && !z.attackHitApplied) {
+                float elapsed = Zombie::AttackDuration - z.attackAnimTimer;
+                if (elapsed >= Zombie::AttackImpactTime) {
+                    // Impact moment: still needs the player to be in range.
+                    if (dist < z.attackRange) damageToPlayer += z.attackDamage;
+                    z.attackHitApplied = true;
+                }
+            }
         }
     }
 
     SeparateZombies(dt);
 
     zombies.erase(std::remove_if(zombies.begin(), zombies.end(),
-        [](const Zombie& z) { return z.dying && z.deathTimer > 0.6f; }),
+        [](const Zombie& z) { return z.dying && z.deathTimer > Zombie::DeathDuration; }),
         zombies.end());
 
     return damageToPlayer;
@@ -134,41 +144,65 @@ void ZombieManager::UpdateZombie(Zombie& z, float dt, const Vector3& playerPos, 
     // Keep the zombie on the ground plane
     z.position.y = 0.0f;
 
-    // --- animation state driven by gameplay (only when the model is loaded) ---
-    if (model.Ready()) {
-        Vector3 toPlayer = Vector3Subtract(playerPos, z.position);
-        float dist = Vector3Length(toPlayer);
+    UpdateAnimationState(z, dt, playerPos);
+}
 
-        int target = model.animIdle;
-        if (z.attackAnimTimer > 0.0f) {
-            target = model.animAttack;
-        } else if (z.hasValidPath && z.pathIndex < z.path.size() && dist > z.attackRange + 0.35f) {
-            target = model.animWalk;
+void ZombieManager::UpdateAnimationState(Zombie& z, float dt, const Vector3& playerPos) {
+    if (!model.Ready()) return;
+
+    Vector3 toPlayer = Vector3Subtract(playerPos, z.position);
+    float dist = Vector3Length(toPlayer);
+
+    // State priority: Death > Attack > Hit > Walk > Idle.
+    Zombie::AnimState target = Zombie::AnimState::Idle;
+    if (z.dying) target = Zombie::AnimState::Death;
+    else if (z.attackAnimTimer > 0.0f) target = Zombie::AnimState::Attack;
+    else if (z.hitTimer > 0.0f) target = Zombie::AnimState::Hit;
+    else if (z.hasValidPath && z.pathIndex < z.path.size() && dist > z.attackRange + 0.35f) target = Zombie::AnimState::Walk;
+
+    // Only switch the model clip when the state actually changes, so looping
+    // clips are not reset every frame.
+    if (target != z.animState) {
+        z.animState = target;
+        int idx = -1;
+        switch (target) {
+            case Zombie::AnimState::Death:  idx = model.animDeath;  break;
+            case Zombie::AnimState::Attack: idx = model.animAttack; break;
+            case Zombie::AnimState::Hit:    idx = (model.animHit >= 0) ? model.animHit : model.animWalk; break;
+            case Zombie::AnimState::Walk:   idx = model.animWalk;   break;
+            case Zombie::AnimState::Idle:   idx = model.animIdle;   break;
         }
-        if (target < 0) target = model.animIdle;
+        if (idx < 0) idx = model.animIdle;
+        if (idx < 0) return;
+        z.animIdx = idx;
+        z.animFrame = 0;
+    }
+    if (z.animIdx < 0 || z.animIdx >= model.animCount) return;
 
-        if (target != z.animIdx) {
-            z.animIdx = target;
-            z.animFrame = 0;
-        }
+    ModelAnimation& anim = model.animations[z.animIdx];
+    int fc = anim.frameCount;
+    if (fc <= 0) fc = 1;
 
-        ModelAnimation& anim = model.animations[z.animIdx];
-        int fc = anim.frameCount;
-        if (fc <= 0) fc = 1;
+    if (target == Zombie::AnimState::Death) return; // driven by deathTimer in Draw
 
-        if (z.attackAnimTimer > 0.0f) {
-            float prog = 1.0f - z.attackAnimTimer / 0.45f;
-            if (prog < 0.0f) prog = 0.0f;
-            if (prog > 1.0f) prog = 1.0f;
-            z.animFrame = (int)(prog * (float)fc);
-            if (z.animFrame >= fc) z.animFrame = fc - 1;
-        } else {
-            float speedFactor = (z.animIdx == model.animWalk) ? (z.speed / 2.2f) : 1.0f;
-            if (speedFactor < 0.0f) speedFactor = 0.0f;
-            z.animFrame = (int)(z.animFrame + dt * 30.0f * speedFactor);
-            while (z.animFrame >= fc) z.animFrame -= fc;
-            if (z.animFrame < 0) z.animFrame = 0;
-        }
+    if (target == Zombie::AnimState::Attack) {
+        float prog = 1.0f - z.attackAnimTimer / Zombie::AttackDuration;
+        if (prog < 0.0f) prog = 0.0f;
+        if (prog > 1.0f) prog = 1.0f;
+        z.animFrame = (int)(prog * (float)fc);
+        if (z.animFrame >= fc) z.animFrame = fc - 1;
+    } else if (target == Zombie::AnimState::Hit) {
+        float prog = 1.0f - z.hitTimer / Zombie::HitReactionTime;
+        if (prog < 0.0f) prog = 0.0f;
+        if (prog > 1.0f) prog = 1.0f;
+        z.animFrame = (int)(prog * (float)fc);
+        if (z.animFrame >= fc) z.animFrame = fc - 1;
+    } else {
+        float speedFactor = (z.animState == Zombie::AnimState::Walk) ? (z.speed / 2.2f) : 1.0f;
+        if (speedFactor < 0.0f) speedFactor = 0.0f;
+        z.animFrame = (int)(z.animFrame + dt * 30.0f * speedFactor);
+        while (z.animFrame >= fc) z.animFrame -= fc;
+        if (z.animFrame < 0) z.animFrame = 0;
     }
 }
 
@@ -183,6 +217,7 @@ void ZombieManager::UpdateZombieNavigation(Zombie& z, float dt, const Vector3& p
         z.pathIndex = 0;
         z.pathRecalcTimer = 0.0f;
         z.stuckTimer = 0.0f;
+        z.approachAngle = 0.0f;
         return;
     }
 
@@ -192,13 +227,46 @@ void ZombieManager::UpdateZombieNavigation(Zombie& z, float dt, const Vector3& p
         z.faceAngle = atan2f(dir.x, dir.z);
     }
 
-    // If close enough to attack, stop path following
-    if (dist <= z.attackRange + 0.35f) {
+    // If close enough to attack, stop path following. Zombies inside the
+    // engage ring spread out to a per-zombie preferred side of the player
+    // instead of stacking on the exact player position.
+    if (dist <= Zombie::EngageRange) {
         z.hasValidPath = false;
         z.path.clear();
         z.pathIndex = 0;
         z.pathRecalcTimer = 0.0f;
         z.stuckTimer = 0.0f;
+
+        // Pick a deterministic preferred approach direction once per
+        // engagement (derived from position, so it is stable in tests).
+        if (z.approachAngle == 0.0f) {
+            float base = atan2f(toPlayer.x, toPlayer.z);
+            float hash = std::fmod(std::fabs(z.position.x * 7.13f + z.position.z * 3.71f), 1.0f);
+            z.approachAngle = base + (hash - 0.5f) * 2.4f;
+        }
+
+        // Walk to a point on a small ring around the player. Stops once in
+        // attack range so combat can begin; slow pace avoids jitter.
+        if (dist > z.attackRange * 0.95f) {
+            float ring = z.attackRange * 0.9f;
+            Vector3 desired{
+                playerPos.x + std::sinf(z.approachAngle) * ring, 0.0f,
+                playerPos.z + std::cosf(z.approachAngle) * ring
+            };
+            Vector3 toDesired = Vector3Subtract(desired, z.position);
+            toDesired.y = 0.0f;
+            float d = Vector3Length(toDesired);
+            if (d > 0.15f) {
+                Vector3 dir = Vector3Normalize(toDesired);
+                Vector3 newPos = Vector3Add(z.position, Vector3Scale(dir, z.speed * 0.6f * dt));
+                if (navigation.Ready() && !navigation.IsWalkable(newPos)) {
+                    // Blocked: pick the mirror side on the next engagement.
+                    z.approachAngle = 0.0f;
+                } else {
+                    z.position = newPos;
+                }
+            }
+        }
         z.lastPosition = z.position;
         return;
     }
@@ -397,6 +465,10 @@ void ZombieManager::Spawn(const Vector3& position, int health, float speed) {
     z.stuckTimer = 0.0f;
     z.lastPosition = position;
     z.hasValidPath = false;
+    z.attackHitApplied = false;
+    z.hitTimer = 0.0f;
+    z.animState = Zombie::AnimState::Idle;
+    z.approachAngle = 0.0f;
     zombies.push_back(z);
 }
 
@@ -461,13 +533,22 @@ int ZombieManager::TestHit(const Ray& ray) {
     if (closest) {
         closest->health -= 1;
         if (closest->health <= 0) {
+            // Death: stop all combat behaviour, start the death animation.
             closest->alive = false;
             closest->dying = true;
             closest->deathTimer = 0.0f;
+            closest->attackAnimTimer = 0.0f;
+            closest->attackHitApplied = true;
+            closest->hitTimer = 0.0f;
+            closest->path.clear();
+            closest->hasValidPath = false;
+            closest->animState = Zombie::AnimState::Death;
             closest->animIdx = model.animDeath;
             closest->animFrame = 0;
             return 10;
         }
+        // Non-lethal hit: brief stagger that does not stop navigation.
+        closest->hitTimer = Zombie::HitReactionTime;
     }
     return 0;
 }
@@ -482,13 +563,16 @@ void ZombieManager::DrawZombie(const Zombie& z) const {
     int frame = z.animFrame;
 
     if (z.dying && model.animDeath >= 0) {
-        alpha = (unsigned char)(255.0f * (1.0f - z.deathTimer / 0.6f));
+        float life = z.deathTimer / Zombie::DeathDuration;
+        if (life > 1.0f) life = 1.0f;
+        // Fade out over the last 30% of the death animation.
+        alpha = (life > 0.7f) ? (unsigned char)(255.0f * (1.0f - (life - 0.7f) / 0.3f)) : 255;
         if (alpha < 0) alpha = 0;
-        sink = (z.deathTimer / 0.6f) * 1.8f;
+        sink = life * 1.8f;
         ai = model.animDeath;
         int fc = model.animations[ai].frameCount;
         if (fc <= 0) fc = 1;
-        float prog = z.deathTimer / 0.6f;
+        float prog = life;
         if (prog > 1.0f) prog = 1.0f;
         frame = (int)(prog * (float)fc);
         if (frame >= fc) frame = fc - 1;

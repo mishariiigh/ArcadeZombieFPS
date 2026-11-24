@@ -17,6 +17,7 @@ struct ZombieModel {
     int animWalk = -1;
     int animAttack = -1;
     int animDeath = -1;
+    int animHit = -1;      // "wave" clip reused as a brief pain reaction
 
     ZombieModel() = default;
     ~ZombieModel() = default;
@@ -30,6 +31,17 @@ struct ZombieModel {
 };
 
 struct Zombie {
+    // Animation states, in decreasing priority: Death > Attack > Hit > Walk > Idle.
+    enum class AnimState { Idle, Walk, Attack, Hit, Death };
+
+    // Attack timing (shared so tests can be deterministic).
+    static constexpr float AttackDuration = 0.60f;  // total punch animation time
+    static constexpr float AttackImpactTime = 0.30f; // time after attack start when damage lands
+    static constexpr float DeathDuration = 2.00f;   // full death clip before removal
+    static constexpr float HitReactionTime = 0.18f; // brief stagger on a non-lethal hit
+    // Zombies inside this radius around the player spread out instead of stacking.
+    static constexpr float EngageRange = 2.50f;
+
     Vector3 position{ 0, 0, 0 };
     float radius = 0.45f;
     float height = 1.8f;
@@ -45,9 +57,13 @@ struct Zombie {
     float attackInterval = 1.0f;
     // Animation state
     float attackAnimTimer = 0.0f;   // >0 while the attack animation plays
+    bool attackHitApplied = false;  // damage for the current swing already dealt
+    float hitTimer = 0.0f;          // >0 while the hit reaction plays
     int animIdx = -1;               // current animation index
     int animFrame = 0;              // current frame within the animation
+    AnimState animState = AnimState::Idle;
     float faceAngle = 0.0f;         // yaw towards the player (radians)
+    float approachAngle = 0.0f;     // preferred direction to circle around the player
     Color bodyColor{ 120, 160, 90, 255 };   // low-poly zombie green (kept for reference)
     Color headColor{ 100, 130, 70, 255 };
 
@@ -100,6 +116,7 @@ private:
 
     void UpdateZombie(Zombie& z, float dt, const Vector3& playerPos, float playerRadius);
     void UpdateZombieNavigation(Zombie& z, float dt, const Vector3& playerPos, float playerRadius);
+    void UpdateAnimationState(Zombie& z, float dt, const Vector3& playerPos);
     void RecalculatePath(Zombie& z, const Vector3& playerPos);
     bool IsStuck(const Zombie& z, float dt) const;
     void HandleStuck(Zombie& z, const Vector3& playerPos);

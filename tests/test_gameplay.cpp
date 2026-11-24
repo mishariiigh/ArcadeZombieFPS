@@ -834,17 +834,27 @@ static void TestZombie_UpdateMovesTowardPlayer() {
 }
 
 static void TestZombie_AttackDamagesPlayer() {
-    TEST("Zombie attack range deals damage");
+    TEST("Zombie attack range deals damage at impact moment");
     ZombieManager zm;
     zm.Spawn({ 0.5f, 0, 0 }, 3, 2.0f);  // very close to player
 
     Vector3 playerPos{ 0, 0, 0 };
-    int dmg = zm.Update(0.0f, playerPos, 0.35f);  // dt=0, attackCooldown starts at 0
-    ASSERT(dmg > 0, "close zombie should deal damage on update");
+    // Attack starts on the first update, but damage lands at AttackImpactTime.
+    int dmg = zm.Update(0.0f, playerPos, 0.35f);
+    ASSERT(dmg == 0, "attack start should not deal damage immediately");
 
-    // Second call should have cooldown, so no damage
-    dmg = zm.Update(0.0f, playerPos, 0.35f);
-    ASSERT(dmg == 0, "attack cooldown should prevent repeated damage");
+    // Advance past the impact time: damage applies on the frame it elapses.
+    float elapsed = 0.0f;
+    while (elapsed < Zombie::AttackImpactTime) {
+        dmg = zm.Update(0.1f, playerPos, 0.35f);
+        elapsed += 0.1f;
+        if (dmg > 0) break;
+    }
+    ASSERT(dmg > 0, "damage should apply at attack impact time");
+
+    // Later frames of the same attack deal no further damage.
+    dmg = zm.Update(0.1f, playerPos, 0.35f);
+    ASSERT(dmg == 0, "a single attack must not apply damage twice");
     PASS();
 }
 
@@ -905,7 +915,7 @@ static void TestZombie_DeathAndRemoval() {
     ASSERT(zm.AliveCount() == 0, "zombie no longer alive");
     ASSERT(zm.TotalCount() == 1, "dying zombie remains during death animation");
     zm.Draw();  // draw the dying zombie (animated + fading)
-    zm.Update(0.7f, { 0, 0, 0 }, 0.35f);  // advance past the 0.6s removal threshold
+    zm.Update(2.1f, { 0, 0, 0 }, 0.35f);  // advance past the full death animation
     ASSERT(zm.TotalCount() == 0, "zombie removed after death timer");
     zm.Shutdown();
     PASS();
@@ -1277,12 +1287,216 @@ static void TestZombie_AttackBehaviorPreserved() {
     zm.Spawn({ 0.5f, 0, 0 }, 3, 2.0f);  // Very close to player
 
     Vector3 playerPos{ 0, 0, 0 };
-    int dmg = zm.Update(0.0f, playerPos, 0.35f);
-    ASSERT(dmg > 0, "close zombie should deal damage");
+    int dmg = 0;
+    for (int i = 0; i < 10 && dmg == 0; ++i) {
+        dmg = zm.Update(0.1f, playerPos, 0.35f);
+    }
+    ASSERT(dmg > 0, "close zombie should deal damage within attack sequence");
 
-    // Second call should have cooldown
-    dmg = zm.Update(0.0f, playerPos, 0.35f);
-    ASSERT(dmg == 0, "attack cooldown should prevent repeated damage");
+    // Cooldown prevents a repeat immediately after.
+    int dmg2 = zm.Update(0.1f, playerPos, 0.35f);
+    ASSERT(dmg2 == 0, "attack cooldown should prevent repeated damage");
+    PASS();
+}
+
+// ---- Milestone 3.2: combat & behaviour regression tests ----
+
+static void TestZombie_CooldownPreventsRepeatedDamage() {
+    TEST("Attack cooldown prevents repeated damage over time");
+    ZombieManager zm;
+    zm.Spawn({ 0.5f, 0, 0 }, 3, 2.0f);
+    Vector3 playerPos{ 0, 0, 0 };
+
+    int total = 0;
+    for (int i = 0; i < 600; ++i) {  // 60 seconds of updates at attack range
+        total += zm.Update(0.1f, playerPos, 0.35f);
+    }
+    // attackInterval is 1.0s: ~60 swings max, damage 12 each => <= 12*61
+    ASSERT(total > 0, "zombie in range should land attacks over 60s");
+    ASSERT(total <= 12 * 61, "cooldown must limit attack frequency");
+    PASS();
+}
+
+static void TestZombie_SingleAttackSingleDamage() {
+    TEST("A single attack does not apply damage multiple times");
+    ZombieManager zm;
+    zm.Spawn({ 0.5f, 0, 0 }, 3, 2.0f);
+    Vector3 playerPos{ 0, 0, 0 };
+
+    zm.Update(0.0f, playerPos, 0.35f);  // start attack
+    int total = 0;
+    for (int i = 0; i < 8; ++i) {
+        total += zm.Update(0.1f, playerPos, 0.35f);  // full attack duration + margin
+    }
+    ASSERT(total == 12, "exactly one application of attackDamage (12) per swing");
+    PASS();
+}
+
+static void TestZombie_PursuesAfterAttack() {
+    TEST("Zombies continue pursuing the player after an attack");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 6.0f, 0, 0 }, 3, 2.0f);
+    Vector3 playerPos{ 0, 0, 0 };
+
+    // Let it reach and attack
+    for (int i = 0; i < 60; ++i) zm.Update(0.1f, playerPos, 0.35f);
+    auto before = zm.Zombies();
+    float distBefore = Vector3Distance(before[0].position, playerPos);
+    ASSERT(distBefore < 3.5f, "zombie should be engaged with player");
+
+    // Player flees; zombie must resume pursuit
+    Vector3 newPlayerPos{ 12.0f, 0, 0 };
+    for (int i = 0; i < 100; ++i) zm.Update(0.1f, newPlayerPos, 0.35f);
+    auto after = zm.Zombies();
+    float distAfter = Vector3Distance(after[0].position, newPlayerPos);
+    ASSERT(distAfter < distBefore + 4.0f,
+           "zombie should chase the fleeing player, not stay behind");
+    PASS();
+}
+
+static void TestZombie_SeparationNearPlayer() {
+    TEST("Zombie separation remains functional near the player");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    for (int i = 0; i < 5; ++i) zm.Spawn({ 2.0f, 0, 0 }, 3, 2.0f);
+    Vector3 playerPos{ 0, 0, 0 };
+
+    for (int i = 0; i < 120; ++i) zm.Update(0.1f, playerPos, 0.35f);
+
+    auto zombies = zm.Zombies();
+    bool separated = true;
+    for (size_t i = 0; i < zombies.size(); ++i) {
+        for (size_t j = i + 1; j < zombies.size(); ++j) {
+            float d = Vector3Distance(zombies[i].position, zombies[j].position);
+            float minD = zombies[i].radius + zombies[j].radius;
+            if (d < minD * 0.7f) separated = false;
+        }
+        ASSERT(Vector3Distance(zombies[i].position, playerPos) < 4.0f,
+               "zombies should remain near the player");
+    }
+    ASSERT(separated == true, "zombies near the player should stay separated");
+    PASS();
+}
+
+static void TestZombie_HitReactionDoesNotStopMovement() {
+    TEST("Hit reactions do not permanently stop zombie movement");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 12.0f, 0, 0 }, 5, 2.0f);  // 5 health: survives hits
+    Vector3 playerPos{ 0, 0, 0 };
+
+    Ray ray{};
+    ray.position = { 9.0f, 0.0f, 0.0f };
+    ray.direction = { 1.0f, 0.0f, 0.0f };
+    ray.direction = Vector3Normalize(ray.direction);
+    int pts = zm.TestHit(ray);
+    ASSERT(pts == 0, "non-lethal hit should not award score");
+    ASSERT(zm.Zombies()[0].hitTimer > 0.0f, "hit reaction timer should be set");
+
+    float xDuring = zm.Zombies()[0].position.x;
+    for (int i = 0; i < 30; ++i) zm.Update(0.1f, playerPos, 0.35f);
+    ASSERT(zm.Zombies()[0].hitTimer <= 0.0f, "hit reaction should expire");
+    ASSERT(zm.Zombies()[0].position.x < xDuring,
+           "zombie should keep moving toward player after hit reaction");
+    PASS();
+}
+
+static void TestZombie_DeadCannotAttackOrDamage() {
+    TEST("Dead zombies cannot attack or damage the player");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 0.5f, 0, 0 }, 1, 2.0f);  // one hit kills
+    Vector3 playerPos{ 0, 0, 0 };
+
+    Ray ray{};
+    ray.position = { -5.0f, 0.0f, 0.0f };
+    ray.direction = { 1.0f, 0.0f, 0.0f };
+    ray.direction = Vector3Normalize(ray.direction);
+    int pts = zm.TestHit(ray);
+    ASSERT(pts == 10, "lethal hit awards 10");
+
+    int total = 0;
+    for (int i = 0; i < 25; ++i) total += zm.Update(0.1f, playerPos, 0.35f);
+    ASSERT(total == 0, "dying zombie must not damage the player");
+    PASS();
+}
+
+static void TestZombie_DeadRemovedAfterDeathAnimation() {
+    TEST("Dead zombies removed after full death animation");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 0, 0, 0 }, 1, 2.0f);
+    Ray ray{};
+    ray.position = { -5.0f, 0.0f, 0.0f };
+    ray.direction = { 1.0f, 0.0f, 0.0f };
+    ray.direction = Vector3Normalize(ray.direction);
+    zm.TestHit(ray);
+
+    ASSERT(zm.TotalCount() == 1, "dying zombie retained during animation");
+    for (int i = 0; i < 19; ++i) {  // 1.9s: just before the 2.0s threshold
+        zm.Update(0.1f, { 0, 0, 0 }, 0.35f);
+    }
+    ASSERT(zm.TotalCount() == 1, "still present just before the threshold");
+    zm.Update(0.1f, { 0, 0, 0 }, 0.35f);
+    ASSERT(zm.TotalCount() == 0, "removed once the death animation finished");
+    PASS();
+}
+
+static void TestZombie_DeadExcludedFromSeparationAndNav() {
+    TEST("Dead zombies excluded from separation and navigation");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 0, 0, 0 }, 1, 2.0f);
+    zm.Spawn({ 0.4f, 0, 0 }, 3, 2.0f);  // alive, overlapping with the doomed one
+    Ray ray{};
+    ray.position = { -5.0f, 0.0f, 0.0f };
+    ray.direction = { 1.0f, 0.0f, 0.0f };
+    ray.direction = Vector3Normalize(ray.direction);
+    zm.TestHit(ray);
+
+    Vector3 playerPos{ 50.0f, 0, 0 };  // player far away: survivor should idle
+    for (int i = 0; i < 20; ++i) zm.Update(0.1f, playerPos, 0.35f);
+    ASSERT(zm.Zombies()[0].alive && !zm.Zombies()[0].dying, "survivor should be alive");
+    ASSERT(zm.Zombies()[0].hasValidPath == false,
+           "alive zombie far from player should not be navigating");
+    PASS();
+}
+
+static void TestZombie_AttackOnlyWithinRange() {
+    TEST("Zombies attack only when within attack range");
+    World world;
+    world.Init();
+    ZombieManager zm;
+    zm.Init();
+    zm.InitNavigation(world);
+    zm.Spawn({ 3.0f, 0, 0 }, 3, 2.0f);  // outside attackRange, inside detect range
+    Vector3 playerPos{ 0, 0, 0 };
+
+    int dmg = 0;
+    for (int i = 0; i < 60; ++i) {  // 6 seconds
+        dmg = zm.Update(0.1f, playerPos, 0.35f);
+        if (dmg > 0) break;
+    }
+    ASSERT(dmg > 0, "zombie should reach and attack the player eventually");
     PASS();
 }
 
@@ -1384,6 +1598,15 @@ int main() {
     TestZombie_NavigationStuckRecovery();
     TestZombie_MultipleSeparation();
     TestZombie_AttackBehaviorPreserved();
+    TestZombie_CooldownPreventsRepeatedDamage();
+    TestZombie_SingleAttackSingleDamage();
+    TestZombie_PursuesAfterAttack();
+    TestZombie_SeparationNearPlayer();
+    TestZombie_HitReactionDoesNotStopMovement();
+    TestZombie_DeadCannotAttackOrDamage();
+    TestZombie_DeadRemovedAfterDeathAnimation();
+    TestZombie_DeadExcludedFromSeparationAndNav();
+    TestZombie_AttackOnlyWithinRange();
 
     printf("\n[Audio]\n");
     TestAudio_InitAndShutdown();
